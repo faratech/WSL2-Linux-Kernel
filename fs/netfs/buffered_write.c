@@ -10,7 +10,6 @@
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/slab.h>
-#include <linux/pagevec.h>
 #include "internal.h"
 
 /*
@@ -226,7 +225,7 @@ ssize_t netfs_perform_write(struct kiocb *iocb, struct iov_iter *iter,
 		 * server would just return a block of zeros or a short read if
 		 * we try to read it.
 		 */
-		if (fpos >= ctx->zero_point) {
+		if (fpos >= netfs_read_zero_point(inode)) {
 			folio_zero_segment(folio, 0, offset);
 			copied = copy_folio_from_iter_atomic(folio, offset, part, iter);
 			if (unlikely(copied == 0))
@@ -310,7 +309,7 @@ ssize_t netfs_perform_write(struct kiocb *iocb, struct iov_iter *iter,
 				goto mark_uptodate;
 			}
 
-			finfo = kzalloc(sizeof(*finfo), GFP_KERNEL);
+			finfo = kzalloc_obj(*finfo);
 			if (!finfo) {
 				iov_iter_revert(iter, copied);
 				ret = -ENOMEM;
@@ -571,7 +570,7 @@ vm_fault_t netfs_page_mkwrite(struct vm_fault *vmf, struct netfs_group *netfs_gr
 		folio_unlock(folio);
 		err = filemap_fdatawrite_range(mapping,
 					       folio_pos(folio),
-					       folio_pos(folio) + folio_size(folio));
+					       folio_next_pos(folio));
 		switch (err) {
 		case 0:
 			ret = VM_FAULT_RETRY;

@@ -132,6 +132,14 @@
 #define RING_BBADDR(base)			XE_REG((base) + 0x140)
 #define RING_BBADDR_UDW(base)			XE_REG((base) + 0x168)
 
+#define PR_CTR_CTRL(base)			XE_REG((base) + 0x178)
+#define   CTR_COUNT_SELECT_FF			REG_BIT(31)
+#define   CTR_LOGIC_OP_MASK			REG_GENMASK(30, 0)
+#define     CTR_START				0
+#define     CTR_STOP				1
+#define   CTR_LOGIC_OP(OP)			REG_FIELD_PREP(CTR_LOGIC_OP_MASK, CTR_##OP)
+#define PR_CTR_THRSH(base)			XE_REG((base) + 0x17c)
+
 #define BCS_SWCTRL(base)			XE_REG((base) + 0x200, XE_REG_OPTION_MASKED)
 #define   BCS_SWCTRL_DISABLE_256B		REG_BIT(2)
 
@@ -147,6 +155,8 @@
 #define   INHIBIT_SWITCH_UNTIL_PREEMPTED	REG_BIT(31)
 #define   IDLE_DELAY				REG_GENMASK(20, 0)
 
+#define RING_CURRENT_LRCA(base)			XE_REG((base) + 0x240)
+
 #define RING_CONTEXT_CONTROL(base)		XE_REG((base) + 0x244, XE_REG_OPTION_MASKED)
 #define	  CTX_CTRL_PXP_ENABLE			REG_BIT(10)
 #define	  CTX_CTRL_OAC_CONTEXT_ENABLE		REG_BIT(8)
@@ -158,6 +168,8 @@
 #define RING_MODE(base)				XE_REG((base) + 0x29c)
 #define   GFX_DISABLE_LEGACY_MODE		REG_BIT(3)
 #define   GFX_MSIX_INTERRUPT_ENABLE		REG_BIT(13)
+
+#define RING_CSMQDEBUG(base)			XE_REG((base) + 0x2b0)
 
 #define RING_TIMESTAMP(base)			XE_REG((base) + 0x358)
 

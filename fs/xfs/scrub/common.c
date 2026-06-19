@@ -3,7 +3,7 @@
  * Copyright (C) 2017-2023 Oracle.  All Rights Reserved.
  * Author: Darrick J. Wong <djwong@kernel.org>
  */
-#include "xfs.h"
+#include "xfs_platform.h"
 #include "xfs_fs.h"
 #include "xfs_shared.h"
 #include "xfs_format.h"
@@ -249,6 +249,17 @@ xchk_ino_set_preen(
 {
 	sc->sm->sm_flags |= XFS_SCRUB_OFLAG_PREEN;
 	trace_xchk_ino_preen(sc, ino, __return_address);
+}
+
+/* Record a block indexed by a file fork that could be optimized. */
+void
+xchk_fblock_set_preen(
+	struct xfs_scrub        *sc,
+	int                     whichfork,
+	xfs_fileoff_t           offset)
+{
+	sc->sm->sm_flags |= XFS_SCRUB_OFLAG_PREEN;
+	trace_xchk_fblock_preen(sc, whichfork, offset, __return_address);
 }
 
 /* Record something being wrong with the filesystem primary superblock. */
@@ -1253,7 +1264,7 @@ xchk_irele(
 		 * hits do not clear DONTCACHE, so we must do it here.
 		 */
 		spin_lock(&VFS_I(ip)->i_lock);
-		VFS_I(ip)->i_state &= ~I_DONTCACHE;
+		inode_state_clear(VFS_I(ip), I_DONTCACHE);
 		spin_unlock(&VFS_I(ip)->i_lock);
 	}
 

@@ -162,7 +162,7 @@ static inline bool dev_xmit_complete(int rc)
 
 #if defined(CONFIG_HYPERV_NET)
 # define LL_MAX_HEADER 128
-#elif defined(CONFIG_WLAN) || IS_ENABLED(CONFIG_AX25)
+#elif defined(CONFIG_WLAN)
 # if defined(CONFIG_MAC80211_MESH)
 #  define LL_MAX_HEADER 128
 # else
@@ -379,6 +379,8 @@ struct napi_config {
  * Structure for NAPI scheduling similar to tasklet but with weighting
  */
 struct napi_struct {
+	/* This field should be first or softnet_data.backlog needs tweaks. */
+	unsigned long		state;
 	/* The poll_list must only be managed by the entity which
 	 * changes the state of the NAPI_STATE_SCHED bit.  This means
 	 * whoever atomically sets that bit can add this napi_struct
@@ -387,7 +389,6 @@ struct napi_struct {
 	 */
 	struct list_head	poll_list;
 
-	unsigned long		state;
 	int			weight;
 	u32			defer_hard_irqs_count;
 	int			(*poll)(struct napi_struct *, int);
@@ -424,11 +425,12 @@ enum {
 	NAPI_STATE_NPSVC,		/* Netpoll - don't dequeue from poll_list */
 	NAPI_STATE_LISTED,		/* NAPI added to system lists */
 	NAPI_STATE_NO_BUSY_POLL,	/* Do not add in napi_hash, no busy polling */
-	NAPI_STATE_IN_BUSY_POLL,	/* sk_busy_loop() owns this NAPI */
+	NAPI_STATE_IN_BUSY_POLL,	/* Do not rearm NAPI interrupt */
 	NAPI_STATE_PREFER_BUSY_POLL,	/* prefer busy-polling over softirq processing*/
 	NAPI_STATE_THREADED,		/* The poll is performed inside its own thread*/
 	NAPI_STATE_SCHED_THREADED,	/* Napi is currently scheduled in threaded mode */
 	NAPI_STATE_HAS_NOTIFIER,	/* Napi has an IRQ notifier */
+	NAPI_STATE_THREADED_BUSY_POLL,	/* The threaded NAPI poller will busy poll */
 };
 
 enum {
@@ -443,6 +445,7 @@ enum {
 	NAPIF_STATE_THREADED		= BIT(NAPI_STATE_THREADED),
 	NAPIF_STATE_SCHED_THREADED	= BIT(NAPI_STATE_SCHED_THREADED),
 	NAPIF_STATE_HAS_NOTIFIER	= BIT(NAPI_STATE_HAS_NOTIFIER),
+	NAPIF_STATE_THREADED_BUSY_POLL	= BIT(NAPI_STATE_THREADED_BUSY_POLL),
 };
 
 enum gro_result {
@@ -876,6 +879,7 @@ enum net_device_path_type {
 	DEV_PATH_PPPOE,
 	DEV_PATH_DSA,
 	DEV_PATH_MTK_WDMA,
+	DEV_PATH_TUN,
 };
 
 struct net_device_path {
@@ -887,6 +891,18 @@ struct net_device_path {
 			__be16		proto;
 			u8		h_dest[ETH_ALEN];
 		} encap;
+		struct {
+			union {
+				struct in_addr	src_v4;
+				struct in6_addr	src_v6;
+			};
+			union {
+				struct in_addr	dst_v4;
+				struct in6_addr	dst_v6;
+			};
+
+			u8	l3_proto;
+		} tun;
 		struct {
 			enum {
 				DEV_PATH_BR_VLAN_KEEP,
@@ -1103,6 +1119,16 @@ struct netdev_net_notifier {
  *	This function is called device changes address list filtering.
  *	If driver handles unicast address filtering, it should set
  *	IFF_UNICAST_FLT in its priv_flags.
+ *	Cannot sleep, called with netif_addr_lock_bh held.
+ *	Deprecated in favor of ndo_set_rx_mode_async.
+ *
+ * void (*ndo_set_rx_mode_async)(struct net_device *dev,
+ *				 struct netdev_hw_addr_list *uc,
+ *				 struct netdev_hw_addr_list *mc);
+ *	Async version of ndo_set_rx_mode which runs in process context
+ *	with rtnl_lock and netdev_lock_ops(dev) held. The uc/mc parameters
+ *	are snapshots of the address lists - iterate with
+ *	netdev_hw_addr_list_for_each(ha, uc).
  *
  * int (*ndo_set_mac_address)(struct net_device *dev, void *addr);
  *	This function  is called when the Media Access Control address
@@ -1423,6 +1449,10 @@ struct net_device_ops {
 	void			(*ndo_change_rx_flags)(struct net_device *dev,
 						       int flags);
 	void			(*ndo_set_rx_mode)(struct net_device *dev);
+	void			(*ndo_set_rx_mode_async)(
+					struct net_device *dev,
+					struct netdev_hw_addr_list *uc,
+					struct netdev_hw_addr_list *mc);
 	int			(*ndo_set_mac_address)(struct net_device *dev,
 						       void *addr);
 	int			(*ndo_validate_addr)(struct net_device *dev);
@@ -1700,7 +1730,6 @@ struct net_device_ops {
  * @IFF_OPENVSWITCH: device is a Open vSwitch master
  * @IFF_L3MDEV_SLAVE: device is enslaved to an L3 master device
  * @IFF_TEAM: device is a team device
- * @IFF_RXFH_CONFIGURED: device has had Rx Flow indirection table configured
  * @IFF_PHONY_HEADROOM: the headroom value is controlled by an external
  *	entity (i.e. the master device for bridged veth)
  * @IFF_MACSEC: device is a MACsec device
@@ -1736,7 +1765,6 @@ enum netdev_priv_flags {
 	IFF_OPENVSWITCH			= 1<<20,
 	IFF_L3MDEV_SLAVE		= 1<<21,
 	IFF_TEAM			= 1<<22,
-	IFF_RXFH_CONFIGURED		= 1<<23,
 	IFF_PHONY_HEADROOM		= 1<<24,
 	IFF_MACSEC			= 1<<25,
 	IFF_NO_RX_HANDLER		= 1<<26,
@@ -1889,6 +1917,9 @@ enum netdev_reg_state {
  *				has been enabled due to the need to listen to
  *				additional unicast addresses in a device that
  *				does not implement ndo_set_rx_mode()
+ *	@rx_mode_node:		List entry for rx_mode work processing
+ *	@rx_mode_tracker:	Refcount tracker for rx_mode work
+ *	@rx_mode_addr_cache:	Recycled snapshot entries for rx_mode work
  *	@uc:			unicast mac addresses
  *	@mc:			multicast mac addresses
  *	@dev_addrs:		list of device hw addresses
@@ -2141,6 +2172,7 @@ struct net_device {
 	unsigned long		state;
 	unsigned int		flags;
 	unsigned short		hard_header_len;
+	enum netdev_stat_type	pcpu_stat_type:8;
 	netdev_features_t	features;
 	struct inet6_dev __rcu	*ip6_ptr;
 	__cacheline_group_end(net_device_read_txrx);
@@ -2279,6 +2311,9 @@ struct net_device {
 	unsigned int		promiscuity;
 	unsigned int		allmulti;
 	bool			uc_promisc;
+	struct list_head	rx_mode_node;
+	netdevice_tracker	rx_mode_tracker;
+	struct netdev_hw_addr_list	rx_mode_addr_cache;
 #ifdef CONFIG_LOCKDEP
 	unsigned char		nested_level;
 #endif
@@ -2300,9 +2335,6 @@ struct net_device {
 #endif
 #if IS_ENABLED(CONFIG_ATALK)
 	void 			*atalk_ptr;
-#endif
-#if IS_ENABLED(CONFIG_AX25)
-	struct ax25_dev	__rcu	*ax25_ptr;
 #endif
 #if IS_ENABLED(CONFIG_CFG80211)
 	struct wireless_dev	*ieee80211_ptr;
@@ -2389,8 +2421,6 @@ struct net_device {
 	/* mid-layer private */
 	void				*ml_priv;
 	enum netdev_ml_priv_type	ml_priv_type;
-
-	enum netdev_stat_type		pcpu_stat_type:8;
 
 #if IS_ENABLED(CONFIG_GARP)
 	struct garp_port __rcu	*garp_port;
@@ -2548,7 +2578,14 @@ struct net_device {
 	 * Also protects some fields in:
 	 *	struct napi_struct, struct netdev_queue, struct netdev_rx_queue
 	 *
-	 * Ordering: take after rtnl_lock.
+	 * Ordering:
+	 *
+	 * - take after rtnl_lock
+	 *
+	 * - for the case of netdev queue leasing, the netdev-scope lock is
+	 *   taken for both the virtual and the physical device; to prevent
+	 *   deadlocks, the virtual device's lock must always be acquired
+	 *   before the physical device's (see netdev_nl_queue_create_doit)
 	 */
 	struct mutex		lock;
 
@@ -2748,6 +2785,17 @@ void dev_net_set(struct net_device *dev, struct net *net)
 static inline void *netdev_priv(const struct net_device *dev)
 {
 	return (void *)dev->priv;
+}
+
+/**
+ * netdev_from_priv() - get network device from priv
+ * @priv: network device private data
+ *
+ * Returns: net_device to which @priv belongs
+ */
+static inline struct net_device *netdev_from_priv(const void *priv)
+{
+	return container_of(priv, struct net_device, priv);
 }
 
 /* Set the sysfs physical device reference for the network logical device
@@ -3389,6 +3437,8 @@ static inline int dev_direct_xmit(struct sk_buff *skb, u16 queue_id)
 int register_netdevice(struct net_device *dev);
 void unregister_netdevice_queue(struct net_device *dev, struct list_head *head);
 void unregister_netdevice_many(struct list_head *head);
+bool unregister_netdevice_queued(const struct net_device *dev);
+
 static inline void unregister_netdevice(struct net_device *dev)
 {
 	unregister_netdevice_queue(dev, NULL);
@@ -3535,9 +3585,17 @@ struct softnet_data {
 	call_single_data_t	csd ____cacheline_aligned_in_smp;
 	struct softnet_data	*rps_ipi_next;
 	unsigned int		cpu;
+
+	/* We force a cacheline alignment from here, to hold together
+	 * input_queue_tail, input_pkt_queue and backlog.state.
+	 * We add holes so that backlog.state is the last field
+	 * of this cache line.
+	 */
+	long			pad[3] ____cacheline_aligned_in_smp;
 	unsigned int		input_queue_tail;
 #endif
 	struct sk_buff_head	input_pkt_queue;
+
 	struct napi_struct	backlog;
 
 	struct numa_drop_counters drop_counters;
@@ -4963,6 +5021,14 @@ void __hw_addr_unsync_dev(struct netdev_hw_addr_list *list,
 			  int (*unsync)(struct net_device *,
 					const unsigned char *));
 void __hw_addr_init(struct netdev_hw_addr_list *list);
+void __hw_addr_flush(struct netdev_hw_addr_list *list);
+int __hw_addr_list_snapshot(struct netdev_hw_addr_list *snap,
+			    const struct netdev_hw_addr_list *list,
+			    int addr_len, struct netdev_hw_addr_list *cache);
+void __hw_addr_list_reconcile(struct netdev_hw_addr_list *real_list,
+			      struct netdev_hw_addr_list *work,
+			      struct netdev_hw_addr_list *ref, int addr_len,
+			      struct netdev_hw_addr_list *cache);
 
 /* Functions used for device addresses handling */
 void dev_addr_mod(struct net_device *dev, unsigned int offset,
@@ -5193,8 +5259,7 @@ void *netdev_lower_dev_get_private(struct net_device *dev,
 void netdev_lower_state_changed(struct net_device *lower_dev,
 				void *lower_state_info);
 
-/* RSS keys are 40 or 52 bytes long */
-#define NETDEV_RSS_KEY_LEN 52
+#define NETDEV_RSS_KEY_LEN 256
 extern u8 netdev_rss_key[NETDEV_RSS_KEY_LEN] __read_mostly;
 void netdev_rss_key_fill(void *buffer, size_t len);
 
@@ -5317,9 +5382,9 @@ static inline netdev_tx_t netdev_start_xmit(struct sk_buff *skb, struct net_devi
 }
 
 int netdev_class_create_file_ns(const struct class_attribute *class_attr,
-				const void *ns);
+				const struct ns_common *ns);
 void netdev_class_remove_file_ns(const struct class_attribute *class_attr,
-				 const void *ns);
+				 const struct ns_common *ns);
 
 extern const struct kobj_ns_type_operations net_ns_type_operations;
 
@@ -5547,10 +5612,7 @@ static inline bool netif_is_lag_port(const struct net_device *dev)
 	return netif_is_bond_slave(dev) || netif_is_team_port(dev);
 }
 
-static inline bool netif_is_rxfh_configured(const struct net_device *dev)
-{
-	return dev->priv_flags & IFF_RXFH_CONFIGURED;
-}
+bool netif_is_rxfh_configured(const struct net_device *dev);
 
 static inline bool netif_is_failover(const struct net_device *dev)
 {

@@ -26,6 +26,8 @@
 
 #include <uapi/linux/if_macsec.h>
 
+static struct workqueue_struct *macsec_wq;
+
 /* SecTAG length = macsec_eth_header without the optional SCI */
 #define MACSEC_TAG_LEN 6
 
@@ -174,9 +176,10 @@ static void macsec_rxsc_put(struct macsec_rx_sc *sc)
 		call_rcu(&sc->rcu_head, free_rx_sc_rcu);
 }
 
-static void free_rxsa(struct rcu_head *head)
+static void free_rxsa_work(struct work_struct *work)
 {
-	struct macsec_rx_sa *sa = container_of(head, struct macsec_rx_sa, rcu);
+	struct macsec_rx_sa *sa =
+		container_of(to_rcu_work(work), struct macsec_rx_sa, destroy_work);
 
 	crypto_free_aead(sa->key.tfm);
 	free_percpu(sa->stats);
@@ -186,7 +189,7 @@ static void free_rxsa(struct rcu_head *head)
 static void macsec_rxsa_put(struct macsec_rx_sa *sa)
 {
 	if (refcount_dec_and_test(&sa->refcnt))
-		call_rcu(&sa->rcu, free_rxsa);
+		queue_rcu_work(macsec_wq, &sa->destroy_work);
 }
 
 static struct macsec_tx_sa *macsec_txsa_get(struct macsec_tx_sa __rcu *ptr)
@@ -202,9 +205,10 @@ static struct macsec_tx_sa *macsec_txsa_get(struct macsec_tx_sa __rcu *ptr)
 	return sa;
 }
 
-static void free_txsa(struct rcu_head *head)
+static void free_txsa_work(struct work_struct *work)
 {
-	struct macsec_tx_sa *sa = container_of(head, struct macsec_tx_sa, rcu);
+	struct macsec_tx_sa *sa =
+		container_of(to_rcu_work(work), struct macsec_tx_sa, destroy_work);
 
 	crypto_free_aead(sa->key.tfm);
 	free_percpu(sa->stats);
@@ -214,7 +218,7 @@ static void free_txsa(struct rcu_head *head)
 static void macsec_txsa_put(struct macsec_tx_sa *sa)
 {
 	if (refcount_dec_and_test(&sa->refcnt))
-		call_rcu(&sa->rcu, free_txsa);
+		queue_rcu_work(macsec_wq, &sa->destroy_work);
 }
 
 static struct macsec_cb *macsec_skb_cb(struct sk_buff *skb)
@@ -1408,6 +1412,7 @@ static int init_rx_sa(struct macsec_rx_sa *rx_sa, char *sak, int key_len,
 	rx_sa->next_pn = 1;
 	refcount_set(&rx_sa->refcnt, 1);
 	spin_lock_init(&rx_sa->lock);
+	INIT_RCU_WORK(&rx_sa->destroy_work, free_rxsa_work);
 
 	return 0;
 }
@@ -1466,7 +1471,7 @@ static struct macsec_rx_sc *create_rx_sc(struct net_device *dev, sci_t sci,
 			return ERR_PTR(-EEXIST);
 	}
 
-	rx_sc = kzalloc(sizeof(*rx_sc), GFP_KERNEL);
+	rx_sc = kzalloc_obj(*rx_sc);
 	if (!rx_sc)
 		return ERR_PTR(-ENOMEM);
 
@@ -1507,6 +1512,7 @@ static int init_tx_sa(struct macsec_tx_sa *tx_sa, char *sak, int key_len,
 	tx_sa->active = false;
 	refcount_set(&tx_sa->refcnt, 1);
 	spin_lock_init(&tx_sa->lock);
+	INIT_RCU_WORK(&tx_sa->destroy_work, free_txsa_work);
 
 	return 0;
 }
@@ -1798,7 +1804,7 @@ static int macsec_add_rxsa(struct sk_buff *skb, struct genl_info *info)
 		return -EBUSY;
 	}
 
-	rx_sa = kmalloc(sizeof(*rx_sa), GFP_KERNEL);
+	rx_sa = kmalloc_obj(*rx_sa);
 	if (!rx_sa) {
 		rtnl_unlock();
 		return -ENOMEM;
@@ -2006,7 +2012,7 @@ static int macsec_add_txsa(struct sk_buff *skb, struct genl_info *info)
 		return -EBUSY;
 	}
 
-	tx_sa = kmalloc(sizeof(*tx_sa), GFP_KERNEL);
+	tx_sa = kmalloc_obj(*tx_sa);
 	if (!tx_sa) {
 		rtnl_unlock();
 		return -ENOMEM;
@@ -2836,7 +2842,7 @@ static void get_rx_sc_stats(struct net_device *dev,
 		stats = per_cpu_ptr(rx_sc->stats, cpu);
 		do {
 			start = u64_stats_fetch_begin(&stats->syncp);
-			memcpy(&tmp, &stats->stats, sizeof(tmp));
+			u64_stats_copy(&tmp, &stats->stats, sizeof(tmp));
 		} while (u64_stats_fetch_retry(&stats->syncp, start));
 
 		sum->InOctetsValidated += tmp.InOctetsValidated;
@@ -2917,7 +2923,7 @@ static void get_tx_sc_stats(struct net_device *dev,
 		stats = per_cpu_ptr(macsec_priv(dev)->secy.tx_sc.stats, cpu);
 		do {
 			start = u64_stats_fetch_begin(&stats->syncp);
-			memcpy(&tmp, &stats->stats, sizeof(tmp));
+			u64_stats_copy(&tmp, &stats->stats, sizeof(tmp));
 		} while (u64_stats_fetch_retry(&stats->syncp, start));
 
 		sum->OutPktsProtected   += tmp.OutPktsProtected;
@@ -2973,7 +2979,7 @@ static void get_secy_stats(struct net_device *dev, struct macsec_dev_stats *sum)
 		stats = per_cpu_ptr(macsec_priv(dev)->stats, cpu);
 		do {
 			start = u64_stats_fetch_begin(&stats->syncp);
-			memcpy(&tmp, &stats->stats, sizeof(tmp));
+			u64_stats_copy(&tmp, &stats->stats, sizeof(tmp));
 		} while (u64_stats_fetch_retry(&stats->syncp, start));
 
 		sum->OutPktsUntagged  += tmp.OutPktsUntagged;
@@ -4069,7 +4075,7 @@ static int register_macsec_dev(struct net_device *real_dev,
 	if (!rxd) {
 		int err;
 
-		rxd = kmalloc(sizeof(*rxd), GFP_KERNEL);
+		rxd = kmalloc_obj(*rxd);
 		if (!rxd)
 			return -ENOMEM;
 
@@ -4506,25 +4512,35 @@ static int __init macsec_init(void)
 {
 	int err;
 
+	macsec_wq = alloc_workqueue("macsec", WQ_UNBOUND, 0);
+	if (!macsec_wq)
+		return -ENOMEM;
+
 	pr_info("MACsec IEEE 802.1AE\n");
 	err = register_netdevice_notifier(&macsec_notifier);
 	if (err)
-		return err;
+		goto err_destroy_wq;
 
 	err = rtnl_link_register(&macsec_link_ops);
 	if (err)
-		goto notifier;
+		goto err_notifier;
 
 	err = genl_register_family(&macsec_fam);
 	if (err)
-		goto rtnl;
+		goto err_rtnl;
 
 	return 0;
 
-rtnl:
+err_rtnl:
 	rtnl_link_unregister(&macsec_link_ops);
-notifier:
+err_notifier:
 	unregister_netdevice_notifier(&macsec_notifier);
+err_destroy_wq:
+	/* Precautionary, mirrors macsec_exit() to stay safe if work
+	 * ever becomes queueable before this point in the future.
+	 */
+	rcu_barrier();
+	destroy_workqueue(macsec_wq);
 	return err;
 }
 
@@ -4534,6 +4550,7 @@ static void __exit macsec_exit(void)
 	rtnl_link_unregister(&macsec_link_ops);
 	unregister_netdevice_notifier(&macsec_notifier);
 	rcu_barrier();
+	destroy_workqueue(macsec_wq);
 }
 
 module_init(macsec_init);

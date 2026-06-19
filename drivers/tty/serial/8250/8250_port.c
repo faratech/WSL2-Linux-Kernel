@@ -555,7 +555,7 @@ static int serial8250_em485_init(struct uart_8250_port *p)
 	if (p->em485)
 		goto deassert_rts;
 
-	p->em485 = kmalloc(sizeof(struct uart_8250_em485), GFP_ATOMIC);
+	p->em485 = kmalloc_obj(struct uart_8250_em485, GFP_ATOMIC);
 	if (!p->em485)
 		return -ENOMEM;
 
@@ -2375,8 +2375,8 @@ void serial8250_do_shutdown(struct uart_port *port)
 
 	synchronize_irq(port->irq);
 
-	if (up->dma)
-		serial8250_release_dma(up);
+	serial8250_release_dma(up);
+	up->dma = NULL;
 
 	scoped_guard(uart_port_lock_irqsave, port) {
 		if (port->flags & UPF_FOURPORT) {

@@ -308,7 +308,7 @@ static int __br_netpoll_enable(struct net_bridge_port *p)
 	struct netpoll *np;
 	int err;
 
-	np = kzalloc(sizeof(*p->np), GFP_KERNEL);
+	np = kzalloc_obj(*p->np);
 	if (!np)
 		return -ENOMEM;
 
@@ -518,6 +518,7 @@ void br_dev_setup(struct net_device *dev)
 	ether_addr_copy(br->group_addr, eth_stp_addr);
 
 	br->stp_enabled = BR_NO_STP;
+	br->stp_mode = BR_STP_MODE_AUTO;
 	br->group_fwd_mask = BR_GROUPFWD_DEFAULT;
 	br->group_fwd_mask_required = BR_GROUPFWD_DEFAULT;
 

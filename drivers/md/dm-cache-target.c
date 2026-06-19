@@ -2133,7 +2133,6 @@ static int parse_cache_dev(struct cache_args *ca, struct dm_arg_set *as,
 static int parse_origin_dev(struct cache_args *ca, struct dm_arg_set *as,
 			    char **error)
 {
-	sector_t origin_sectors;
 	int r;
 
 	if (!at_least_one_arg(as, error))
@@ -2144,12 +2143,6 @@ static int parse_origin_dev(struct cache_args *ca, struct dm_arg_set *as,
 	if (r) {
 		*error = "Error opening origin device";
 		return r;
-	}
-
-	origin_sectors = get_dev_size(ca->origin_dev);
-	if (ca->ti->len > origin_sectors) {
-		*error = "Device size larger than cached device";
-		return -EINVAL;
 	}
 
 	return 0;
@@ -2428,7 +2421,7 @@ static int cache_create(struct cache_args *ca, struct cache **result)
 	struct dm_cache_metadata *cmd;
 	bool may_format = ca->features.mode == CM_WRITE;
 
-	cache = kzalloc(sizeof(*cache), GFP_KERNEL);
+	cache = kzalloc_obj(*cache);
 	if (!cache)
 		return -ENOMEM;
 
@@ -2638,7 +2631,7 @@ static int cache_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	struct cache_args *ca;
 	struct cache *cache = NULL;
 
-	ca = kzalloc(sizeof(*ca), GFP_KERNEL);
+	ca = kzalloc_obj(*ca);
 	if (!ca) {
 		ti->error = "Error allocating memory for cache";
 		return -ENOMEM;
@@ -2961,6 +2954,9 @@ static dm_cblock_t get_cache_dev_size(struct cache *cache)
 
 static bool can_resume(struct cache *cache)
 {
+	bool clean_when_opened;
+	int r;
+
 	/*
 	 * Disallow retrying the resume operation for devices that failed the
 	 * first resume attempt, as the failure leaves the policy object partially
@@ -2975,6 +2971,20 @@ static bool can_resume(struct cache *cache)
 			DMERR("%s: unable to resume cache due to missing proper cache table reload",
 			      cache_device_name(cache));
 		return false;
+	}
+
+	if (passthrough_mode(cache)) {
+		r = dm_cache_metadata_clean_when_opened(cache->cmd, &clean_when_opened);
+		if (r) {
+			DMERR("%s: failed to query metadata flags", cache_device_name(cache));
+			return false;
+		}
+
+		if (!clean_when_opened) {
+			DMERR("%s: unable to resume into passthrough mode after unclean shutdown",
+			      cache_device_name(cache));
+			return false;
+		}
 	}
 
 	return true;
@@ -3542,7 +3552,7 @@ static void cache_io_hints(struct dm_target *ti, struct queue_limits *limits)
 
 static struct target_type cache_target = {
 	.name = "cache",
-	.version = {2, 3, 0},
+	.version = {2, 4, 0},
 	.module = THIS_MODULE,
 	.ctr = cache_ctr,
 	.dtr = cache_dtr,

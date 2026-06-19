@@ -19,7 +19,6 @@
 #include <net/arp.h>
 #include <net/ndisc.h>
 #include <net/gro.h>
-#include <net/ipv6_stubs.h>
 #include <net/ip.h>
 #include <net/icmp.h>
 #include <net/rtnetlink.h>
@@ -580,7 +579,7 @@ static int vxlan_fdb_append(struct vxlan_fdb *f,
 	if (rd)
 		return 0;
 
-	rd = kmalloc(sizeof(*rd), GFP_ATOMIC);
+	rd = kmalloc_obj(*rd, GFP_ATOMIC);
 	if (rd == NULL)
 		return -ENOMEM;
 
@@ -774,7 +773,7 @@ static struct vxlan_fdb *vxlan_fdb_alloc(struct vxlan_dev *vxlan, const u8 *mac,
 {
 	struct vxlan_fdb *f;
 
-	f = kmalloc(sizeof(*f), GFP_ATOMIC);
+	f = kmalloc_obj(*f, GFP_ATOMIC);
 	if (!f)
 		return NULL;
 	memset(&f->key, 0, sizeof(f->key));
@@ -2030,13 +2029,11 @@ static int neigh_reduce(struct net_device *dev, struct sk_buff *skb, __be32 vni)
 	struct vxlan_dev *vxlan = netdev_priv(dev);
 	const struct in6_addr *daddr;
 	const struct ipv6hdr *iphdr;
-	struct inet6_dev *in6_dev;
 	struct neighbour *n;
 	struct nd_msg *msg;
 
 	rcu_read_lock();
-	in6_dev = __in6_dev_get(dev);
-	if (!in6_dev)
+	if (unlikely(!ipv6_mod_enabled()))
 		goto out;
 
 	iphdr = ipv6_hdr(skb);
@@ -2047,7 +2044,7 @@ static int neigh_reduce(struct net_device *dev, struct sk_buff *skb, __be32 vni)
 	    ipv6_addr_is_multicast(&msg->target))
 		goto out;
 
-	n = neigh_lookup(ipv6_stub->nd_tbl, &msg->target, dev);
+	n = neigh_lookup(&nd_tbl, &msg->target, dev);
 
 	if (n) {
 		struct vxlan_rdst *rdst = NULL;
@@ -2132,15 +2129,15 @@ static bool route_shortcircuit(struct net_device *dev, struct sk_buff *skb)
 	{
 		struct ipv6hdr *pip6;
 
-		/* check if nd_tbl is not initiliazed due to
-		 * ipv6.disable=1 set during boot
+		/* check if ipv6.disable=1 set during boot was set
+		 * during booting so nd_tbl is not initialized
 		 */
-		if (!ipv6_stub->nd_tbl)
+		if (!ipv6_mod_enabled())
 			return false;
 		if (!pskb_may_pull(skb, sizeof(struct ipv6hdr)))
 			return false;
 		pip6 = ipv6_hdr(skb);
-		n = neigh_lookup(ipv6_stub->nd_tbl, &pip6->daddr, dev);
+		n = neigh_lookup(&nd_tbl, &pip6->daddr, dev);
 		if (!n && (vxlan->cfg.flags & VXLAN_F_L3MISS)) {
 			union vxlan_addr ipa = {
 				.sin6.sin6_addr = pip6->daddr,
@@ -2190,11 +2187,12 @@ static int vxlan_build_skb(struct sk_buff *skb, struct dst_entry *dst,
 			   struct vxlan_metadata *md, u32 vxflags,
 			   bool udp_sum)
 {
-	struct vxlanhdr *vxh;
-	int min_headroom;
-	int err;
 	int type = udp_sum ? SKB_GSO_UDP_TUNNEL_CSUM : SKB_GSO_UDP_TUNNEL;
 	__be16 inner_protocol = htons(ETH_P_TEB);
+	struct vxlanhdr *vxh;
+	bool double_encap;
+	int min_headroom;
+	int err;
 
 	if ((vxflags & VXLAN_F_REMCSUM_TX) &&
 	    skb->ip_summed == CHECKSUM_PARTIAL) {
@@ -2215,6 +2213,7 @@ static int vxlan_build_skb(struct sk_buff *skb, struct dst_entry *dst,
 	if (unlikely(err))
 		return err;
 
+	double_encap = udp_tunnel_handle_partial(skb);
 	err = iptunnel_handle_offloads(skb, type);
 	if (err)
 		return err;
@@ -2245,7 +2244,7 @@ static int vxlan_build_skb(struct sk_buff *skb, struct dst_entry *dst,
 		inner_protocol = skb->protocol;
 	}
 
-	skb_set_inner_protocol(skb, inner_protocol);
+	udp_tunnel_set_inner_protocol(skb, double_encap, inner_protocol);
 	return 0;
 }
 
@@ -3355,10 +3354,18 @@ static void vxlan_setup(struct net_device *dev)
 	dev->features   |= NETIF_F_RXCSUM;
 	dev->features   |= NETIF_F_GSO_SOFTWARE;
 
+	/* Partial features are disabled by default. */
 	dev->vlan_features = dev->features;
 	dev->hw_features |= NETIF_F_SG | NETIF_F_HW_CSUM | NETIF_F_FRAGLIST;
 	dev->hw_features |= NETIF_F_RXCSUM;
 	dev->hw_features |= NETIF_F_GSO_SOFTWARE;
+	dev->hw_features |= UDP_TUNNEL_PARTIAL_FEATURES;
+	dev->hw_features |= NETIF_F_GSO_PARTIAL;
+
+	dev->hw_enc_features = dev->hw_features;
+	dev->gso_partial_features = UDP_TUNNEL_PARTIAL_FEATURES;
+	dev->mangleid_features = NETIF_F_GSO_PARTIAL;
+
 	netif_keep_dst(dev);
 	dev->priv_flags |= IFF_NO_QUEUE;
 	dev->change_proto_down = true;
@@ -3575,7 +3582,7 @@ static struct vxlan_sock *vxlan_socket_create(struct net *net, bool ipv6,
 
 	ASSERT_RTNL();
 
-	vs = kzalloc(sizeof(*vs), GFP_KERNEL);
+	vs = kzalloc_obj(*vs);
 	if (!vs)
 		return ERR_PTR(-ENOMEM);
 

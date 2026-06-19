@@ -954,6 +954,7 @@ static bool __input_process_payload(struct xfrm_state *x, u32 data,
 	u32 first_iplen, iphlen, iplen, remaining, tail;
 	u32 capturelen;
 	u64 seq;
+	bool first_skb_partial = false;
 
 	xtfs = x->mode_data;
 	net = xs_net(x);
@@ -1161,6 +1162,7 @@ static bool __input_process_payload(struct xfrm_state *x, u32 data,
 
 			spin_unlock(&xtfs->drop_lock);
 
+			first_skb_partial = (first_skb == skb);
 			break;
 		}
 
@@ -1172,7 +1174,7 @@ static bool __input_process_payload(struct xfrm_state *x, u32 data,
 		/* this should not happen from the above code */
 		XFRM_INC_STATS(net, LINUX_MIB_XFRMINIPTFSERROR);
 
-	if (first_skb && first_iplen && !defer && first_skb != xtfs->ra_newskb) {
+	if (first_skb && first_iplen && !defer && !first_skb_partial) {
 		/* first_skb is queued b/c !defer and not partial */
 		if (pskb_trim(first_skb, first_iplen)) {
 			/* error trimming */
@@ -2168,6 +2170,8 @@ static void iptfs_consume_frags(struct sk_buff *to, struct sk_buff *from)
 	memcpy(&toi->frags[toi->nr_frags], fromi->frags,
 	       sizeof(fromi->frags[0]) * fromi->nr_frags);
 	toi->nr_frags += fromi->nr_frags;
+	if (fromi->nr_frags)
+		toi->flags |= fromi->flags & SKBFL_SHARED_FRAG;
 	fromi->nr_frags = 0;
 	from->data_len = 0;
 	from->len = 0;
@@ -2537,8 +2541,8 @@ static int iptfs_user_init(struct net *net, struct xfrm_state *x,
 			nla_get_u16(attrs[XFRMA_IPTFS_REORDER_WINDOW]);
 	/* saved array is for saving 1..N seq nums from wantseq */
 	if (xc->reorder_win_size) {
-		xtfs->w_saved = kcalloc(xc->reorder_win_size,
-					sizeof(*xtfs->w_saved), GFP_KERNEL);
+		xtfs->w_saved = kzalloc_objs(*xtfs->w_saved,
+					     xc->reorder_win_size);
 		if (!xtfs->w_saved) {
 			NL_SET_ERR_MSG(extack, "Cannot alloc reorder window");
 			return -ENOMEM;
@@ -2667,8 +2671,7 @@ static int iptfs_clone_state(struct xfrm_state *x, struct xfrm_state *orig)
 		return -ENOMEM;
 
 	if (xtfs->cfg.reorder_win_size) {
-		w_saved = kcalloc(xtfs->cfg.reorder_win_size,
-				  sizeof(*w_saved), GFP_KERNEL);
+		w_saved = kzalloc_objs(*w_saved, xtfs->cfg.reorder_win_size);
 		if (!w_saved) {
 			kfree_sensitive(xtfs);
 			return -ENOMEM;
@@ -2707,7 +2710,7 @@ static int iptfs_init_state(struct xfrm_state *x)
 		/* We have arrived here from xfrm_state_clone() */
 		xtfs = x->mode_data;
 	} else {
-		xtfs = kzalloc(sizeof(*xtfs), GFP_KERNEL);
+		xtfs = kzalloc_obj(*xtfs);
 		if (!xtfs)
 			return -ENOMEM;
 	}
@@ -2727,8 +2730,9 @@ static void iptfs_destroy_state(struct xfrm_state *x)
 	if (!xtfs)
 		return;
 
-	spin_lock_bh(&xtfs->x->lock);
 	hrtimer_cancel(&xtfs->iptfs_timer);
+
+	spin_lock_bh(&xtfs->x->lock);
 	__skb_queue_head_init(&list);
 	skb_queue_splice_init(&xtfs->queue, &list);
 	spin_unlock_bh(&xtfs->x->lock);
@@ -2736,9 +2740,7 @@ static void iptfs_destroy_state(struct xfrm_state *x)
 	while ((skb = __skb_dequeue(&list)))
 		kfree_skb(skb);
 
-	spin_lock_bh(&xtfs->drop_lock);
 	hrtimer_cancel(&xtfs->drop_timer);
-	spin_unlock_bh(&xtfs->drop_lock);
 
 	if (xtfs->ra_newskb)
 		kfree_skb(xtfs->ra_newskb);

@@ -27,16 +27,16 @@ request, we encourage you to [submit the change upstream][submit-patch].
 Instructions for building an x86_64 WSL2 kernel with an Ubuntu distribution using bash are
 as follows:
 
-1. Install the build dependencies:  
+1. Install the build dependencies:
    `$ sudo apt install build-essential flex bison dwarves libssl-dev libelf-dev cpio qemu-utils`
 
-2. Modify WSL2 kernel configs (optional):  
+2. Modify WSL2 kernel configs (optional):
    `$ make menuconfig KCONFIG_CONFIG=Microsoft/config-wsl`
 
 3. Build the kernel using the WSL2 kernel configuration and put the modules in a `modules`
-   folder under the current working directory:  
+   folder under the current working directory:
    `$ make KCONFIG_CONFIG=Microsoft/config-wsl && make INSTALL_MOD_PATH="$PWD/modules" modules_install`
-   
+
    You may wish to include `-j$(nproc)` on the first `make` command to build in parallel.
 
 Then, you can use a provided script to create a VHDX containing the modules:

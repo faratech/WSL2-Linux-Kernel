@@ -670,6 +670,10 @@ static const struct of_device_id ipa_match[] = {
 		.data		= &ipa_data_v5_0,
 	},
 	{
+		.compatible	= "qcom,milos-ipa",
+		.data		= &ipa_data_v5_2,
+	},
+	{
 		.compatible	= "qcom,sm8550-ipa",
 		.data		= &ipa_data_v5_5,
 	},
@@ -830,7 +834,7 @@ static int ipa_probe(struct platform_device *pdev)
 	}
 
 	/* No more EPROBE_DEFER.  Allocate and initialize the IPA structure */
-	ipa = kzalloc(sizeof(*ipa), GFP_KERNEL);
+	ipa = kzalloc_obj(*ipa);
 	if (!ipa) {
 		ret = -ENOMEM;
 		goto err_power_exit;
@@ -903,7 +907,6 @@ static int ipa_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_deconfig;
 done:
-	pm_runtime_mark_last_busy(dev);
 	(void)pm_runtime_put_autosuspend(dev);
 
 	return 0;

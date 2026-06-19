@@ -21,7 +21,10 @@
 #include <drm/drm_module.h>
 #include <drm/drm_panic.h>
 #include <drm/drm_plane_helper.h>
+#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_vblank.h>
+#include <drm/drm_vblank_helper.h>
 
 #include <video/vga.h>
 
@@ -526,6 +529,7 @@ static void bochs_crtc_helper_atomic_enable(struct drm_crtc *crtc,
 	struct bochs_device *bochs = to_bochs_device(crtc->dev);
 
 	bochs_hw_blank(bochs, false);
+	drm_crtc_vblank_on(crtc);
 }
 
 static void bochs_crtc_helper_atomic_disable(struct drm_crtc *crtc,
@@ -533,12 +537,14 @@ static void bochs_crtc_helper_atomic_disable(struct drm_crtc *crtc,
 {
 	struct bochs_device *bochs = to_bochs_device(crtc->dev);
 
+	drm_crtc_vblank_off(crtc);
 	bochs_hw_blank(bochs, true);
 }
 
 static const struct drm_crtc_helper_funcs bochs_crtc_helper_funcs = {
 	.mode_set_nofb = bochs_crtc_helper_mode_set_nofb,
 	.atomic_check = bochs_crtc_helper_atomic_check,
+	.atomic_flush = drm_crtc_vblank_atomic_flush,
 	.atomic_enable = bochs_crtc_helper_atomic_enable,
 	.atomic_disable = bochs_crtc_helper_atomic_disable,
 };
@@ -550,6 +556,7 @@ static const struct drm_crtc_funcs bochs_crtc_funcs = {
 	.page_flip = drm_atomic_helper_page_flip,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	DRM_CRTC_VBLANK_TIMER_FUNCS,
 };
 
 static const struct drm_encoder_funcs bochs_encoder_funcs = {
@@ -670,6 +677,10 @@ static int bochs_kms_init(struct bochs_device *bochs)
 	drm_connector_attach_edid_property(connector);
 	drm_connector_attach_encoder(connector, encoder);
 
+	ret = drm_vblank_init(dev, 1);
+	if (ret)
+		return ret;
+
 	drm_mode_config_reset(dev);
 
 	return 0;
@@ -750,24 +761,20 @@ static int bochs_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent
 
 	ret = pcim_enable_device(pdev);
 	if (ret)
-		goto err_free_dev;
+		return ret;
 
 	pci_set_drvdata(pdev, dev);
 
 	ret = bochs_load(bochs);
 	if (ret)
-		goto err_free_dev;
+		return ret;
 
 	ret = drm_dev_register(dev, 0);
 	if (ret)
-		goto err_free_dev;
+		return ret;
 
 	drm_client_setup(dev, NULL);
 
-	return ret;
-
-err_free_dev:
-	drm_dev_put(dev);
 	return ret;
 }
 

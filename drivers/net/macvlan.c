@@ -163,7 +163,7 @@ static int macvlan_hash_add_source(struct macvlan_dev *vlan,
 	if (entry)
 		return 0;
 
-	entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+	entry = kmalloc_obj(*entry);
 	if (!entry)
 		return -ENOMEM;
 
@@ -313,11 +313,15 @@ static void macvlan_multicast_rx(const struct macvlan_port *port,
 				  MACVLAN_MODE_BRIDGE);
 	else
 		/*
-		 * flood only to VEPA ports, bridge ports
-		 * already saw the frame on the way out.
+		 * Flood to VEPA and bridge ports. We cannot distinguish
+		 * a looped-back locally-originated multicast from one
+		 * sent by an external source sharing the same source MAC
+		 * (e.g., VRRP virtual MAC), so deliver to bridge ports
+		 * as well to ensure correct reception in all cases.
 		 */
-		macvlan_broadcast(skb, port, src->dev,
-				  MACVLAN_MODE_VEPA);
+		macvlan_broadcast(skb, port, NULL,
+				  MACVLAN_MODE_VEPA |
+				  MACVLAN_MODE_BRIDGE);
 }
 
 static void macvlan_process_broadcast(struct work_struct *w)
@@ -356,6 +360,9 @@ static void macvlan_broadcast_enqueue(struct macvlan_port *port,
 	struct sk_buff *nskb;
 	int err = -ENOMEM;
 
+	if (skb_queue_len_lockless(&port->bc_queue) >= bc_queue_len_used)
+		goto err;
+
 	nskb = skb_clone(skb, GFP_ATOMIC);
 	if (!nskb)
 		goto err;
@@ -379,7 +386,7 @@ static void macvlan_broadcast_enqueue(struct macvlan_port *port,
 	return;
 
 free_nskb:
-	kfree_skb(nskb);
+	kfree_skb_reason(nskb, SKB_DROP_REASON_MACVLAN_BROADCAST_BACKLOG);
 err:
 	dev_core_stats_rx_dropped_inc(skb->dev);
 }
@@ -1132,7 +1139,7 @@ static int macvlan_dev_netpoll_setup(struct net_device *dev)
 	struct netpoll *netpoll;
 	int err;
 
-	netpoll = kzalloc(sizeof(*netpoll), GFP_KERNEL);
+	netpoll = kzalloc_obj(*netpoll);
 	err = -ENOMEM;
 	if (!netpoll)
 		goto out;
@@ -1250,7 +1257,7 @@ static int macvlan_port_create(struct net_device *dev)
 	if (netdev_is_rx_handler_busy(dev))
 		return -EBUSY;
 
-	port = kzalloc(sizeof(*port), GFP_KERNEL);
+	port = kzalloc_obj(*port);
 	if (port == NULL)
 		return -ENOMEM;
 

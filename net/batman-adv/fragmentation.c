@@ -160,7 +160,7 @@ static bool batadv_frag_insert_packet(struct batadv_orig_node *orig_node,
 	seqno = ntohs(frag_packet->seqno);
 	bucket = seqno % BATADV_FRAG_BUFFER_COUNT;
 
-	frag_entry_new = kmalloc(sizeof(*frag_entry_new), GFP_ATOMIC);
+	frag_entry_new = kmalloc_obj(*frag_entry_new, GFP_ATOMIC);
 	if (!frag_entry_new)
 		goto err;
 
@@ -305,10 +305,10 @@ free:
 }
 
 /**
- * batadv_skb_is_frag() - check if newly merged skb is gain a unicast packet
+ * batadv_skb_is_frag() - check if newly merged skb contains unicast fragment
  * @skb: newly merged skb
  *
- * Return: if newly skb is of type BATADV_UNICAST_FRAG
+ * Return: if newly merged skb is of type BATADV_UNICAST_FRAG
  */
 static bool batadv_skb_is_frag(struct sk_buff *skb)
 {

@@ -460,7 +460,7 @@ update_ea:
 
 	new_sz = size;
 	err = attr_set_size(ni, ATTR_EA, NULL, 0, &ea_run, new_sz, &new_sz,
-			    false, NULL);
+			    false);
 	if (err)
 		goto out;
 
@@ -640,25 +640,31 @@ static noinline int ntfs_set_acl_ex(struct mnt_idmap *idmap,
 		value = NULL;
 		flags = XATTR_REPLACE;
 	} else {
-		size = posix_acl_xattr_size(acl->a_count);
-		value = kmalloc(size, GFP_NOFS);
+		value = posix_acl_to_xattr(&init_user_ns, acl, &size, GFP_NOFS);
 		if (!value)
 			return -ENOMEM;
-		err = posix_acl_to_xattr(&init_user_ns, acl, value, size);
-		if (err < 0)
-			goto out;
 		flags = 0;
 	}
 
 	err = ntfs_set_ea(inode, name, name_len, value, size, flags, 0, NULL);
 	if (err == -ENODATA && !size)
 		err = 0; /* Removing non existed xattr. */
-	if (!err) {
-		set_cached_acl(inode, type, acl);
+	if (err)
+		goto out;
+
+	if (inode->i_mode != mode) {
+		umode_t old_mode = inode->i_mode;
 		inode->i_mode = mode;
-		inode_set_ctime_current(inode);
-		mark_inode_dirty(inode);
+		err = ntfs_save_wsl_perm(inode, NULL);
+		if (err) {
+			inode->i_mode = old_mode;
+			goto out;
+		}
+		inode->i_mode = mode;
 	}
+	set_cached_acl(inode, type, acl);
+	inode_set_ctime_current(inode);
+	mark_inode_dirty(inode);
 
 out:
 	kfree(value);
@@ -1025,7 +1031,7 @@ void ntfs_get_wsl_perm(struct inode *inode)
 		i_gid_write(inode, (gid_t)le32_to_cpu(value[1]));
 		inode->i_mode = le32_to_cpu(value[2]);
 
-		if (ntfs_get_ea(inode, "$LXDEV", sizeof("$$LXDEV") - 1,
+		if (ntfs_get_ea(inode, "$LXDEV", sizeof("$LXDEV") - 1,
 				&value[0], sizeof(value),
 				&sz) == sizeof(value[0])) {
 			inode->i_rdev = le32_to_cpu(value[0]);

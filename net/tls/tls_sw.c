@@ -1100,7 +1100,7 @@ static int tls_sw_sendmsg_locked(struct sock *sk, struct msghdr *msg,
 		orig_size = msg_pl->sg.size;
 		full_record = false;
 		try_to_copy = msg_data_left(msg);
-		record_room = TLS_MAX_PAYLOAD_SIZE - msg_pl->sg.size;
+		record_room = tls_ctx->tx_max_payload_len - msg_pl->sg.size;
 		if (try_to_copy >= record_room) {
 			try_to_copy = record_room;
 			full_record = true;
@@ -2060,8 +2060,7 @@ static void tls_rx_reader_unlock(struct sock *sk, struct tls_sw_context_rx *ctx)
 int tls_sw_recvmsg(struct sock *sk,
 		   struct msghdr *msg,
 		   size_t len,
-		   int flags,
-		   int *addr_len)
+		   int flags)
 {
 	struct tls_context *tls_ctx = tls_get_ctx(sk);
 	struct tls_sw_context_rx *ctx = tls_sw_ctx_rx(tls_ctx);
@@ -2336,9 +2335,9 @@ ssize_t tls_sw_splice_read(struct socket *sock,  loff_t *ppos,
 	if (copied < 0)
 		goto splice_requeue;
 
-	if (chunk < rxm->full_len) {
-		rxm->offset += len;
-		rxm->full_len -= len;
+	if (copied < rxm->full_len) {
+		rxm->offset += copied;
+		rxm->full_len -= copied;
 		goto splice_requeue;
 	}
 
@@ -2730,7 +2729,7 @@ static struct tls_sw_context_tx *init_ctx_tx(struct tls_context *ctx, struct soc
 	struct tls_sw_context_tx *sw_ctx_tx;
 
 	if (!ctx->priv_ctx_tx) {
-		sw_ctx_tx = kzalloc(sizeof(*sw_ctx_tx), GFP_KERNEL);
+		sw_ctx_tx = kzalloc_obj(*sw_ctx_tx);
 		if (!sw_ctx_tx)
 			return NULL;
 	} else {
@@ -2751,7 +2750,7 @@ static struct tls_sw_context_rx *init_ctx_rx(struct tls_context *ctx)
 	struct tls_sw_context_rx *sw_ctx_rx;
 
 	if (!ctx->priv_ctx_rx) {
-		sw_ctx_rx = kzalloc(sizeof(*sw_ctx_rx), GFP_KERNEL);
+		sw_ctx_rx = kzalloc_obj(*sw_ctx_rx);
 		if (!sw_ctx_rx)
 			return NULL;
 	} else {

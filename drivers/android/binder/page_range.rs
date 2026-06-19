@@ -132,7 +132,7 @@ pub(crate) struct ShrinkablePageRange {
     pid: Pid,
     /// The mm for the relevant process.
     mm: ARef<Mm>,
-    /// Used to synchronize calls to `vm_insert_page` and `zap_page_range_single`.
+    /// Used to synchronize calls to `vm_insert_page` and `zap_vma_range`.
     #[pin]
     mm_lock: Mutex<()>,
     /// Spinlock protecting changes to pages.
@@ -437,24 +437,25 @@ impl ShrinkablePageRange {
         //
         // Using `mmput_async` avoids this, because then the `mm` cleanup is instead queued to a
         // workqueue.
-        check_vma(
-            MmWithUser::into_mmput_async(self.mm.mmget_not_zero().ok_or(ESRCH)?)
-                .mmap_read_lock()
-                .vma_lookup(vma_addr)
-                .ok_or(ESRCH)?,
-            self,
-        )
-        .ok_or(ESRCH)?
-        .vm_insert_page(user_page_addr, &new_page)
-        .inspect_err(|err| {
-            pr_warn!(
-                "Failed to vm_insert_page({}): vma_addr:{} i:{} err:{:?}",
-                user_page_addr,
-                vma_addr,
-                i,
-                err
-            )
-        })?;
+        let mm = MmWithUser::into_mmput_async(self.mm.mmget_not_zero().ok_or(ESRCH)?);
+        {
+            let vma_read;
+            let mmap_read;
+            let vma = if let Some(ret) = mm.lock_vma_under_rcu(vma_addr) {
+                vma_read = ret;
+                check_vma(&vma_read, self)
+            } else {
+                mmap_read = mm.mmap_read_lock();
+                mmap_read
+                    .vma_lookup(vma_addr)
+                    .and_then(|vma| check_vma(vma, self))
+            };
+
+            match vma {
+                Some(vma) => vma.vm_insert_page(user_page_addr, &new_page)?,
+                None => return Err(ESRCH),
+            }
+        }
 
         let inner = self.lock.lock();
 
@@ -682,15 +683,15 @@ unsafe extern "C" fn rust_shrink_scan(
     unsafe {
         bindings::list_lru_walk(
             list_lru,
-            Some(bindings::rust_shrink_free_page_wrap),
+            Some(rust_shrink_free_page),
             ptr::null_mut(),
             nr_to_scan,
         )
     }
 }
 
-const LRU_SKIP: bindings::lru_status = bindings::lru_status_LRU_SKIP;
-const LRU_REMOVED_ENTRY: bindings::lru_status = bindings::lru_status_LRU_REMOVED_RETRY;
+const LRU_SKIP: bindings::lru_status = bindings::lru_status::LRU_SKIP;
+const LRU_REMOVED_ENTRY: bindings::lru_status = bindings::lru_status::LRU_REMOVED_RETRY;
 
 /// # Safety
 /// Called by the shrinker.
@@ -763,7 +764,7 @@ unsafe extern "C" fn rust_shrink_free_page(
     if let Some(unchecked_vma) = mmap_read.vma_lookup(vma_addr) {
         if let Some(vma) = check_vma(unchecked_vma, range_ptr) {
             let user_page_addr = vma_addr + (page_index << PAGE_SHIFT);
-            vma.zap_page_range_single(user_page_addr, PAGE_SIZE);
+            vma.zap_vma_range(user_page_addr, PAGE_SIZE);
         }
     }
 

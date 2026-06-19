@@ -60,10 +60,11 @@ psp_dev_create(struct net_device *netdev,
 		    !psd_ops->key_rotate ||
 		    !psd_ops->rx_spi_alloc ||
 		    !psd_ops->tx_key_add ||
-		    !psd_ops->tx_key_del))
+		    !psd_ops->tx_key_del ||
+		    !psd_ops->get_stats))
 		return ERR_PTR(-EINVAL);
 
-	psd = kzalloc(sizeof(*psd), GFP_KERNEL);
+	psd = kzalloc_obj(*psd);
 	if (!psd)
 		return ERR_PTR(-ENOMEM);
 
@@ -201,7 +202,7 @@ static void psp_write_headers(struct net *net, struct sk_buff *skb, __be32 spi,
 		 * reciprocal divide.
 		 */
 		hash ^= hash << 16;
-		uh->source = htons((((u64)hash * (max - min)) >> 32) + min);
+		uh->source = htons(reciprocal_scale(hash, max - min + 1) + min);
 	} else {
 		uh->source = udp_flow_src_port(net, skb, 0, 0, false);
 	}

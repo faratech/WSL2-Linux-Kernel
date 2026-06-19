@@ -298,7 +298,7 @@ cleanup:
 	if (dmafence)
 		dma_fence_put(dmafence);
 	if (ret) {
-		if (syncobj) 
+		if (syncobj)
 			dxgsyncobject_destroy(process, syncobj);
 	}
 	if (adapter)

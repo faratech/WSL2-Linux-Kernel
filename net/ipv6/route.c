@@ -687,14 +687,14 @@ static void rt6_probe(struct fib6_nh *fib6_nh)
 		    time_after(jiffies,
 			       neigh->updated +
 			       READ_ONCE(idev->cnf.rtr_probe_interval))) {
-			work = kmalloc(sizeof(*work), GFP_ATOMIC);
+			work = kmalloc_obj(*work, GFP_ATOMIC);
 			if (work)
 				__neigh_set_probe_once(neigh);
 		}
 		write_unlock_bh(&neigh->lock);
 	} else if (time_after(jiffies, last_probe +
 				       READ_ONCE(idev->cnf.rtr_probe_interval))) {
-		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+		work = kmalloc_obj(*work, GFP_ATOMIC);
 	}
 
 	if (!work || cmpxchg(&fib6_nh->last_probe,
@@ -1648,6 +1648,10 @@ static unsigned int fib6_mtu(const struct fib6_result *res)
 
 		rcu_read_lock();
 		idev = __in6_dev_get(dev);
+		if (!idev) {
+			rcu_read_unlock();
+			return 0;
+		}
 		mtu = READ_ONCE(idev->cnf.mtu6);
 		rcu_read_unlock();
 	}
@@ -1727,8 +1731,8 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	bucket = rcu_dereference_protected(nh->rt6i_exception_bucket,
 					  lockdep_is_held(&rt6_exception_lock));
 	if (!bucket) {
-		bucket = kcalloc(FIB6_EXCEPTION_BUCKET_SIZE, sizeof(*bucket),
-				 GFP_ATOMIC);
+		bucket = kzalloc_objs(*bucket, FIB6_EXCEPTION_BUCKET_SIZE,
+				      GFP_ATOMIC);
 		if (!bucket) {
 			err = -ENOMEM;
 			goto out;
@@ -1763,7 +1767,7 @@ static int rt6_insert_exception(struct rt6_info *nrt,
 	if (rt6_ex)
 		rt6_remove_exception(bucket, rt6_ex);
 
-	rt6_ex = kzalloc(sizeof(*rt6_ex), GFP_ATOMIC);
+	rt6_ex = kzalloc_obj(*rt6_ex, GFP_ATOMIC);
 	if (!rt6_ex) {
 		err = -ENOMEM;
 		goto out;
@@ -2053,6 +2057,8 @@ unlock:
 static bool rt6_mtu_change_route_allowed(struct inet6_dev *idev,
 					 struct rt6_info *rt, int mtu)
 {
+	u32 dmtu = dst6_mtu(&rt->dst);
+
 	/* If the new MTU is lower than the route PMTU, this new MTU will be the
 	 * lowest MTU in the path: always allow updating the route PMTU to
 	 * reflect PMTU decreases.
@@ -2063,10 +2069,10 @@ static bool rt6_mtu_change_route_allowed(struct inet6_dev *idev,
 	 * handle this.
 	 */
 
-	if (dst_mtu(&rt->dst) >= mtu)
+	if (dmtu >= mtu)
 		return true;
 
-	if (dst_mtu(&rt->dst) == idev->cnf.mtu6)
+	if (dmtu == idev->cnf.mtu6)
 		return true;
 
 	return false;
@@ -2656,6 +2662,7 @@ void ip6_route_input(struct sk_buff *skb)
 	skb_dst_set_noref(skb, ip6_route_input_lookup(net, skb->dev,
 						      &fl6, skb, flags));
 }
+EXPORT_SYMBOL_GPL(ip6_route_input);
 
 INDIRECT_CALLABLE_SCOPE struct rt6_info *ip6_pol_route_output(struct net *net,
 					     struct fib6_table *table,
@@ -2936,7 +2943,7 @@ static void __ip6_rt_update_pmtu(struct dst_entry *dst, const struct sock *sk,
 
 	if (mtu < IPV6_MIN_MTU)
 		return;
-	if (mtu >= dst_mtu(dst))
+	if (mtu >= dst6_mtu(dst))
 		return;
 
 	if (!rt6_cache_allowed_for_pmtu(rt6)) {
@@ -3252,7 +3259,7 @@ EXPORT_SYMBOL_GPL(ip6_sk_redirect);
 
 static unsigned int ip6_default_advmss(const struct dst_entry *dst)
 {
-	unsigned int mtu = dst_mtu(dst);
+	unsigned int mtu = dst6_mtu(dst);
 	struct net *net;
 
 	mtu -= sizeof(struct ipv6hdr) + sizeof(struct tcphdr);
@@ -3423,11 +3430,8 @@ static int ip6_route_check_nh_onlink(struct net *net,
 
 	err = ip6_nh_lookup_table(net, cfg, gw_addr, tbid, 0, &res);
 	if (!err && !(res.fib6_flags & RTF_REJECT) &&
-	    /* ignore match if it is the default route */
-	    !ipv6_addr_any(&res.f6i->fib6_dst.addr) &&
-	    (res.fib6_type != RTN_UNICAST || dev != res.nh->fib_nh_dev)) {
-		NL_SET_ERR_MSG(extack,
-			       "Nexthop has invalid gateway or device mismatch");
+	    res.fib6_type != RTN_UNICAST) {
+		NL_SET_ERR_MSG(extack, "Nexthop has invalid gateway");
 		err = -EINVAL;
 	}
 
@@ -3588,6 +3592,11 @@ int fib6_nh_init(struct net *net, struct fib6_nh *fib6_nh,
 	struct net_device *dev = NULL;
 	struct inet6_dev *idev = NULL;
 	int err;
+
+	if (!ipv6_mod_enabled()) {
+		NL_SET_ERR_MSG(extack, "IPv6 support not enabled in kernel");
+		return -EAFNOSUPPORT;
+	}
 
 	fib6_nh->fib_nh_family = AF_INET6;
 #ifdef CONFIG_IPV6_ROUTER_PREF
@@ -4993,6 +5002,7 @@ static int fib6_ifdown(struct fib6_info *rt, void *p_arg)
 		    rt->fib6_flags & (RTF_LOCAL | RTF_ANYCAST))
 			break;
 		rt->fib6_nh->fib_nh_flags |= RTNH_F_LINKDOWN;
+		fib6_update_sernum(net, rt);
 		rt6_multipath_rebalance(rt);
 		break;
 	}
@@ -5334,7 +5344,7 @@ static int ip6_route_info_append(struct list_head *rt6_nh_list,
 			return -EEXIST;
 	}
 
-	nh = kzalloc(sizeof(*nh), GFP_KERNEL);
+	nh = kzalloc_obj(*nh);
 	if (!nh)
 		return -ENOMEM;
 
@@ -6783,7 +6793,7 @@ static struct pernet_operations ip6_route_net_ops = {
 
 static int __net_init ipv6_inetpeer_init(struct net *net)
 {
-	struct inet_peer_base *bp = kmalloc(sizeof(*bp), GFP_KERNEL);
+	struct inet_peer_base *bp = kmalloc_obj(*bp);
 
 	if (!bp)
 		return -ENOMEM;
@@ -6832,7 +6842,6 @@ void __init ip6_route_init_special_entries(void)
   #endif
 }
 
-#if IS_BUILTIN(CONFIG_IPV6)
 #if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
 DEFINE_BPF_ITER_FUNC(ipv6_route, struct bpf_iter_meta *meta, struct fib6_info *rt)
 
@@ -6865,7 +6874,6 @@ static void bpf_iter_unregister(void)
 {
 	bpf_iter_unreg_target(&ipv6_route_reg_info);
 }
-#endif
 #endif
 
 static const struct rtnl_msg_handler ip6_route_rtnl_msg_handlers[] __initconst_or_module = {
@@ -6927,12 +6935,10 @@ int __init ip6_route_init(void)
 	if (ret)
 		goto out_register_late_subsys;
 
-#if IS_BUILTIN(CONFIG_IPV6)
 #if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
 	ret = bpf_iter_register();
 	if (ret)
-		goto out_register_late_subsys;
-#endif
+		goto out_register_notifier;
 #endif
 
 	for_each_possible_cpu(cpu) {
@@ -6945,6 +6951,10 @@ int __init ip6_route_init(void)
 out:
 	return ret;
 
+#if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
+out_register_notifier:
+	unregister_netdevice_notifier(&ip6_route_dev_notifier);
+#endif
 out_register_late_subsys:
 	rtnl_unregister_all(PF_INET6);
 	unregister_pernet_subsys(&ip6_route_net_late_ops);
@@ -6967,10 +6977,8 @@ out_kmem_cache:
 
 void ip6_route_cleanup(void)
 {
-#if IS_BUILTIN(CONFIG_IPV6)
 #if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_PROC_FS)
 	bpf_iter_unregister();
-#endif
 #endif
 	unregister_netdevice_notifier(&ip6_route_dev_notifier);
 	unregister_pernet_subsys(&ip6_route_net_late_ops);

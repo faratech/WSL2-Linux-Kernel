@@ -153,6 +153,7 @@ enum genpd_sync_state {
 };
 
 struct dev_power_governor {
+	bool (*system_power_down_ok)(struct dev_pm_domain *domain);
 	bool (*power_down_ok)(struct dev_pm_domain *domain);
 	bool (*suspend_ok)(struct device *dev);
 };
@@ -182,6 +183,7 @@ struct genpd_power_state {
 	u64 rejected;
 	u64 above;
 	u64 below;
+	u64 usage_s2idle;
 	struct fwnode_handle *fwnode;
 	u64 idle_time;
 	void *data;

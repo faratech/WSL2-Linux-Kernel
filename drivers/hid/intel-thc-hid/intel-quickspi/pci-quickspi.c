@@ -343,7 +343,6 @@ end:
 		if (try_recover(qsdev))
 			qsdev->state = QUICKSPI_DISABLED;
 
-	pm_runtime_mark_last_busy(qsdev->dev);
 	pm_runtime_put_autosuspend(qsdev->dev);
 
 	return IRQ_HANDLED;
@@ -678,7 +677,6 @@ static int quickspi_probe(struct pci_dev *pdev,
 	/* Enable runtime power management */
 	pm_runtime_use_autosuspend(qsdev->dev);
 	pm_runtime_set_autosuspend_delay(qsdev->dev, DEFAULT_AUTO_SUSPEND_DELAY_MS);
-	pm_runtime_mark_last_busy(qsdev->dev);
 	pm_runtime_put_noidle(qsdev->dev);
 	pm_runtime_put_autosuspend(qsdev->dev);
 
@@ -755,9 +753,11 @@ static int quickspi_suspend(struct device *device)
 	if (!qsdev)
 		return -ENODEV;
 
-	ret = quickspi_set_power(qsdev, HIDSPI_SLEEP);
-	if (ret)
-		return ret;
+	if (!device_may_wakeup(qsdev->dev)) {
+		ret = quickspi_set_power(qsdev, HIDSPI_SLEEP);
+		if (ret)
+			return ret;
+	}
 
 	ret = thc_interrupt_quiesce(qsdev->thc_hw, true);
 	if (ret)
@@ -796,9 +796,8 @@ static int quickspi_resume(struct device *device)
 	if (ret)
 		return ret;
 
-	ret = quickspi_set_power(qsdev, HIDSPI_ON);
-	if (ret)
-		return ret;
+	if (!device_may_wakeup(qsdev->dev))
+		return quickspi_set_power(qsdev, HIDSPI_ON);
 
 	return 0;
 }
@@ -856,6 +855,9 @@ static int quickspi_poweroff(struct device *device)
 	qsdev = pci_get_drvdata(pdev);
 	if (!qsdev)
 		return -ENODEV;
+
+	/* Ignore the return value as platform will be poweroff soon */
+	quickspi_set_power(qsdev, HIDSPI_OFF);
 
 	ret = thc_interrupt_quiesce(qsdev->thc_hw, true);
 	if (ret)

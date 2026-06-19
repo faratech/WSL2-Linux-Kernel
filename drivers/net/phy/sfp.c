@@ -588,6 +588,8 @@ static const struct sfp_quirk sfp_quirks[] = {
 	SFP_QUIRK_F("Turris", "RTSFP-2.5G", sfp_fixup_rollball),
 	SFP_QUIRK_F("Turris", "RTSFP-10", sfp_fixup_rollball),
 	SFP_QUIRK_F("Turris", "RTSFP-10G", sfp_fixup_rollball),
+
+	SFP_QUIRK_S("ZOERAX", "SFP-2.5G-T", sfp_quirk_oem_2_5g),
 };
 
 static size_t sfp_strlen(const char *str, size_t maxlen)
@@ -820,6 +822,7 @@ static int sfp_i2c_configure(struct sfp *sfp, struct i2c_adapter *i2c)
 		return -EINVAL;
 	}
 
+	sfp->i2c_block_size = sfp->i2c_max_block_size;
 	return 0;
 }
 
@@ -3056,7 +3059,7 @@ static struct sfp *sfp_alloc(struct device *dev)
 {
 	struct sfp *sfp;
 
-	sfp = kzalloc(sizeof(*sfp), GFP_KERNEL);
+	sfp = kzalloc_obj(*sfp);
 	if (!sfp)
 		return ERR_PTR(-ENOMEM);
 

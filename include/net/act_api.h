@@ -45,6 +45,7 @@ struct tc_action {
 	struct tc_cookie	__rcu *user_cookie;
 	struct tcf_chain	__rcu *goto_chain;
 	u32			tcfa_flags;
+	struct rcu_head         tcfa_rcu;
 	u8			hw_stats;
 	u8			used_hw_stats;
 	bool			used_hw_stats_valid;
@@ -160,7 +161,7 @@ int tc_action_net_init(struct net *net, struct tc_action_net *tn,
 {
 	int err = 0;
 
-	tn->idrinfo = kmalloc(sizeof(*tn->idrinfo), GFP_KERNEL);
+	tn->idrinfo = kmalloc_obj(*tn->idrinfo);
 	if (!tn->idrinfo)
 		return -ENOMEM;
 	tn->ops = ops;

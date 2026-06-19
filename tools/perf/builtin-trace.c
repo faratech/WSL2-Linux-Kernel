@@ -21,7 +21,6 @@
 #include <bpf/libbpf.h>
 #include <bpf/btf.h>
 #endif
-#include "util/bpf_map.h"
 #include "util/rlimit.h"
 #include "builtin.h"
 #include "util/cgroup.h"
@@ -772,11 +771,6 @@ static const char *bpf_cmd[] = {
 };
 static DEFINE_STRARRAY(bpf_cmd, "BPF_");
 
-static const char *fsmount_flags[] = {
-	[1] = "CLOEXEC",
-};
-static DEFINE_STRARRAY(fsmount_flags, "FSMOUNT_");
-
 #include "trace/beauty/generated/fsconfig_arrays.c"
 
 static DEFINE_STRARRAY(fsconfig_cmds, "FSCONFIG_");
@@ -1203,7 +1197,9 @@ static const struct syscall_fmt syscall_fmts[] = {
 	{ .name     = "fsconfig",
 	  .arg = { [1] = STRARRAY(cmd, fsconfig_cmds), }, },
 	{ .name     = "fsmount",
-	  .arg = { [1] = STRARRAY_FLAGS(flags, fsmount_flags),
+	  .arg = { [1] = { .scnprintf = SCA_FSMOUNT_FLAGS, /* fsmount_flags */
+			   .strtoul   = STUL_STRARRAYS,
+			   .show_zero = true, },
 		   [2] = { .scnprintf = SCA_FSMOUNT_ATTR_FLAGS, /* attr_flags */ }, }, },
 	{ .name     = "fspick",
 	  .arg = { [0] = { .scnprintf = SCA_FDAT,	  /* dfd */ },
@@ -2005,9 +2001,15 @@ static int trace__symbols_init(struct trace *trace, int argc, const char **argv,
 	if (err < 0)
 		goto out;
 
+	if (trace->summary_only && trace->summary_mode != SUMMARY__BY_THREAD)
+		goto out;
+
 	err = __machine__synthesize_threads(trace->host, &trace->tool, &trace->opts.target,
 					    evlist->core.threads, trace__tool_process,
-					    true, false, 1);
+					    /*needs_mmap=*/callchain_param.enabled &&
+							   !trace->summary_only,
+					    /*mmap_data=*/false,
+					    /*nr_threads_synthesize=*/1);
 out:
 	if (err) {
 		perf_env__exit(&trace->host_env);
@@ -2069,6 +2071,15 @@ static const struct syscall_arg_fmt *syscall_arg_fmt__find_by_name(const char *n
        return __syscall_arg_fmt__find_by_name(syscall_arg_fmts__by_name, nmemb, name);
 }
 
+/*
+ * v6.19 kernel added new fields to read userspace memory for event tracing.
+ * But it's not used by perf and confuses the syscall parameters.
+ */
+static bool is_internal_field(struct tep_format_field *field)
+{
+	return !strcmp(field->type, "__data_loc char[]");
+}
+
 static struct tep_format_field *
 syscall_arg_fmt__init_array(struct syscall_arg_fmt *arg, struct tep_format_field *field,
 			    bool *use_btf)
@@ -2077,6 +2088,10 @@ syscall_arg_fmt__init_array(struct syscall_arg_fmt *arg, struct tep_format_field
 	int len;
 
 	for (; field; field = field->next, ++arg) {
+		/* assume it's the last argument */
+		if (is_internal_field(field))
+			continue;
+
 		last_field = field;
 
 		if (arg->scnprintf)
@@ -2145,6 +2160,7 @@ static int syscall__read_info(struct syscall *sc, struct trace *trace)
 {
 	char tp_name[128];
 	const char *name;
+	struct tep_format_field *field;
 	int err;
 
 	if (sc->nonexistent)
@@ -2201,6 +2217,13 @@ static int syscall__read_info(struct syscall *sc, struct trace *trace)
 		--sc->nr_args;
 	}
 
+	field = sc->args;
+	while (field) {
+		if (is_internal_field(field))
+			--sc->nr_args;
+		field = field->next;
+	}
+
 	sc->is_exit = !strcmp(name, "exit_group") || !strcmp(name, "exit");
 	sc->is_open = !strcmp(name, "open") || !strcmp(name, "openat");
 
@@ -2243,9 +2266,7 @@ static int trace__validate_ev_qualifier(struct trace *trace)
 	struct str_node *pos;
 	size_t nr_used = 0, nr_allocated = strlist__nr_entries(trace->ev_qualifier);
 
-	trace->ev_qualifier_ids.entries = malloc(nr_allocated *
-						 sizeof(trace->ev_qualifier_ids.entries[0]));
-
+	trace->ev_qualifier_ids.entries = calloc(nr_allocated, sizeof(trace->ev_qualifier_ids.entries[0]));
 	if (trace->ev_qualifier_ids.entries == NULL) {
 		fputs("Error:\tNot enough memory for allocating events qualifier ids\n",
 		       trace->output);
@@ -2595,12 +2616,10 @@ static struct syscall *trace__syscall_info(struct trace *trace, struct evsel *ev
 		err = syscall__read_info(sc, trace);
 
 	if (err && verbose > 0) {
-		char sbuf[STRERR_BUFSIZE];
-
-		fprintf(trace->output, "Problems reading syscall %d: %d (%s)", id, -err,
-			str_error_r(-err, sbuf, sizeof(sbuf)));
+		errno = -err;
+		fprintf(trace->output, "Problems reading syscall %d: %m", id);
 		if (sc && sc->name)
-			fprintf(trace->output, "(%s)", sc->name);
+			fprintf(trace->output, " (%s)", sc->name);
 		fputs(" information\n", trace->output);
 	}
 	return err ? NULL : sc;
@@ -2770,7 +2789,7 @@ static int trace__sys_enter(struct trace *trace, struct evsel *evsel,
 	struct thread_trace *ttrace;
 
 	thread = machine__findnew_thread(trace->host, sample->pid, sample->tid);
-	e_machine = thread__e_machine(thread, trace->host);
+	e_machine = thread__e_machine(thread, trace->host, /*e_flags=*/NULL);
 	sc = trace__syscall_info(trace, evsel, e_machine, id);
 	if (sc == NULL)
 		goto out_put;
@@ -2849,7 +2868,7 @@ static int trace__fprintf_sys_enter(struct trace *trace, struct evsel *evsel,
 
 
 	thread = machine__findnew_thread(trace->host, sample->pid, sample->tid);
-	e_machine = thread__e_machine(thread, trace->host);
+	e_machine = thread__e_machine(thread, trace->host, /*e_flags=*/NULL);
 	sc = trace__syscall_info(trace, evsel, e_machine, id);
 	if (sc == NULL)
 		goto out_put;
@@ -2915,7 +2934,7 @@ static int trace__sys_exit(struct trace *trace, struct evsel *evsel,
 	struct thread_trace *ttrace;
 
 	thread = machine__findnew_thread(trace->host, sample->pid, sample->tid);
-	e_machine = thread__e_machine(thread, trace->host);
+	e_machine = thread__e_machine(thread, trace->host, /*e_flags=*/NULL);
 	sc = trace__syscall_info(trace, evsel, e_machine, id);
 	if (sc == NULL)
 		goto out_put;
@@ -2936,7 +2955,7 @@ static int trace__sys_exit(struct trace *trace, struct evsel *evsel,
 		++trace->stats.vfs_getname;
 	}
 
-	if (ttrace->entry_time) {
+	if (ttrace->entry_time && sample->time >= ttrace->entry_time) {
 		duration = sample->time - ttrace->entry_time;
 		if (trace__filter_duration(trace, duration))
 			goto out;
@@ -3266,7 +3285,9 @@ static int trace__event_handler(struct trace *trace, struct evsel *evsel,
 
 	if (evsel == trace->syscalls.events.bpf_output) {
 		int id = perf_evsel__sc_tp_uint(evsel, id, sample);
-		int e_machine = thread ? thread__e_machine(thread, trace->host) : EM_HOST;
+		int e_machine = thread
+			? thread__e_machine(thread, trace->host, /*e_flags=*/NULL)
+			: EM_HOST;
 		struct syscall *sc = trace__syscall_info(trace, evsel, e_machine, id);
 
 		if (sc) {
@@ -4652,9 +4673,8 @@ out_error:
 
 out_error_apply_filters:
 	fprintf(trace->output,
-		"Failed to set filter \"%s\" on event %s with %d (%s)\n",
-		evsel->filter, evsel__name(evsel), errno,
-		str_error_r(errno, errbuf, sizeof(errbuf)));
+		"Failed to set filter \"%s\" on event %s: %m\n",
+		evsel->filter, evsel__name(evsel));
 	goto out_delete_evlist;
 }
 out_error_mem:
@@ -4662,7 +4682,7 @@ out_error_mem:
 	goto out_delete_evlist;
 
 out_errno:
-	fprintf(trace->output, "errno=%d,%s\n", errno, strerror(errno));
+	fprintf(trace->output, "%m\n");
 	goto out_delete_evlist;
 }
 
@@ -4898,7 +4918,7 @@ static size_t trace__fprintf_thread(FILE *fp, struct thread *thread, struct trac
 {
 	size_t printed = 0;
 	struct thread_trace *ttrace = thread__priv(thread);
-	int e_machine = thread__e_machine(thread, trace->host);
+	int e_machine = thread__e_machine(thread, trace->host, /*e_flags=*/NULL);
 	double ratio;
 
 	if (ttrace == NULL)
@@ -5152,8 +5172,8 @@ static int trace__parse_events_option(const struct option *opt, const char *str,
 				      int unset __maybe_unused)
 {
 	struct trace *trace = (struct trace *)opt->value;
-	const char *s = str;
-	char *sep = NULL, *lists[2] = { NULL, NULL, };
+	const char *s;
+	char *strd, *sep = NULL, *lists[2] = { NULL, NULL, };
 	int len = strlen(str) + 1, err = -1, list, idx;
 	char *strace_groups_dir = system_path(STRACE_GROUPS_DIR);
 	char group_name[PATH_MAX];
@@ -5162,13 +5182,17 @@ static int trace__parse_events_option(const struct option *opt, const char *str,
 	if (strace_groups_dir == NULL)
 		return -1;
 
+	s = strd = strdup(str);
+	if (strd == NULL)
+		return -1;
+
 	if (*s == '!') {
 		++s;
 		trace->not_ev_qualifier = true;
 	}
 
 	while (1) {
-		if ((sep = strchr(s, ',')) != NULL)
+		if ((sep = strchr((char *)s, ',')) != NULL)
 			*sep = '\0';
 
 		list = 0;
@@ -5236,8 +5260,7 @@ out:
 	free(strace_groups_dir);
 	free(lists[0]);
 	free(lists[1]);
-	if (sep)
-		*sep = ',';
+	free(strd);
 
 	return err;
 }
@@ -5274,6 +5297,13 @@ static int trace__parse_summary_mode(const struct option *opt, const char *str,
 	}
 
 	return 0;
+}
+
+static int trace_parse_callchain_opt(const struct option *opt,
+				     const char *arg,
+				     int unset)
+{
+	return record_opts__parse_callchain(opt->value, &callchain_param, arg, unset);
 }
 
 static int trace__config(const char *var, const char *value, void *arg)
@@ -5423,7 +5453,7 @@ int cmd_trace(int argc, const char **argv)
 	OPT_BOOLEAN('f', "force", &trace.force, "don't complain, do it"),
 	OPT_CALLBACK(0, "call-graph", &trace.opts,
 		     "record_mode[,record_size]", record_callchain_help,
-		     &record_parse_callchain_opt),
+		     &trace_parse_callchain_opt),
 	OPT_BOOLEAN(0, "libtraceevent_print", &trace.libtraceevent_print,
 		    "Use libtraceevent to print the tracepoint arguments."),
 	OPT_BOOLEAN(0, "kernel-syscall-graph", &trace.kernel_syscallchains,

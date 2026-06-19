@@ -452,8 +452,6 @@ static struct nft_pipapo_elem *pipapo_get_slow(const struct nft_pipapo_match *m,
 			pipapo_and_field_buckets_4bit(f, res_map, data);
 		NFT_PIPAPO_GROUP_BITS_ARE_8_OR_4;
 
-		data += f->groups / NFT_PIPAPO_GROUPS_PER_BYTE(f);
-
 		/* Now populate the bitmap for the next field, unless this is
 		 * the last field, in which case return the matched 'ext'
 		 * pointer if any.
@@ -498,7 +496,7 @@ next_match:
 		map_index = !map_index;
 		swap(res_map, fill_map);
 
-		data += NFT_PIPAPO_GROUPS_PADDING(f);
+		data += NFT_PIPAPO_GROUPS_PADDED_SIZE(f);
 	}
 
 	__local_unlock_nested_bh(&scratch->bh_lock);
@@ -652,7 +650,7 @@ static int pipapo_realloc_mt(struct nft_pipapo_field *f,
 	if (rules_alloc > (INT_MAX / sizeof(*new_mt)))
 		return -ENOMEM;
 
-	new_mt = kvmalloc_array(rules_alloc, sizeof(*new_mt), GFP_KERNEL_ACCOUNT);
+	new_mt = kvmalloc_objs(*new_mt, rules_alloc, GFP_KERNEL_ACCOUNT);
 	if (!new_mt)
 		return -ENOMEM;
 
@@ -1413,7 +1411,7 @@ static struct nft_pipapo_match *pipapo_clone(struct nft_pipapo_match *old)
 	struct nft_pipapo_match *new;
 	int i;
 
-	new = kmalloc(struct_size(new, f, old->field_count), GFP_KERNEL_ACCOUNT);
+	new = kmalloc_flex(*new, f, old->field_count, GFP_KERNEL_ACCOUNT);
 	if (!new)
 		return NULL;
 
@@ -1460,9 +1458,8 @@ static struct nft_pipapo_match *pipapo_clone(struct nft_pipapo_match *old)
 			if (src->rules_alloc > (INT_MAX / sizeof(*src->mt)))
 				goto out_mt;
 
-			dst->mt = kvmalloc_array(src->rules_alloc,
-						 sizeof(*src->mt),
-						 GFP_KERNEL_ACCOUNT);
+			dst->mt = kvmalloc_objs(*src->mt, src->rules_alloc,
+						GFP_KERNEL_ACCOUNT);
 			if (!dst->mt)
 				goto out_mt;
 
@@ -2277,7 +2274,7 @@ static int nft_pipapo_init(const struct nft_set *set,
 	if (field_count > NFT_PIPAPO_MAX_FIELDS)
 		return -EINVAL;
 
-	m = kmalloc(struct_size(m, f, field_count), GFP_KERNEL);
+	m = kmalloc_flex(*m, f, field_count);
 	if (!m)
 		return -ENOMEM;
 

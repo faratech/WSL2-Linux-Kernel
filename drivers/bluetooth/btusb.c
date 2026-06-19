@@ -583,8 +583,6 @@ static const struct usb_device_id quirks_table[] = {
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x13d3, 0x3591), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
-	{ USB_DEVICE(0x13d3, 0x3618), .driver_info = BTUSB_REALTEK |
-						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe123), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe125), .driver_info = BTUSB_REALTEK |
@@ -594,6 +592,10 @@ static const struct usb_device_id quirks_table[] = {
 	{ USB_DEVICE(0x0bda, 0x8520), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe12f), .driver_info = BTUSB_REALTEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3618), .driver_info = BTUSB_REALTEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3619), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
 
 	/* Realtek 8922AE Bluetooth devices */
@@ -669,7 +671,17 @@ static const struct usb_device_id quirks_table[] = {
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x13d3, 0x3606), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
-
+	/* MediaTek MT7902 Bluetooth devices */
+	{ USB_DEVICE(0x0e8d, 0x1ede), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3579), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3580), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3594), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3596), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
 	/* MediaTek MT7922 Bluetooth devices */
 	{ USB_DEVICE(0x13d3, 0x3585), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
@@ -695,13 +707,19 @@ static const struct usb_device_id quirks_table[] = {
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe102), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe11d), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe152), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe153), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe170), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe174), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x04ca, 0x3804), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x04ca, 0x3807), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x04ca, 0x38e4), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
@@ -734,6 +752,18 @@ static const struct usb_device_id quirks_table[] = {
 	{ USB_DEVICE(0x0489, 0xe124), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe139), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe13a), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe0fa), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe10f), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe110), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x0489, 0xe116), .driver_info = BTUSB_MEDIATEK |
+						     BTUSB_WIDEBAND_SPEECH },
+	{ USB_DEVICE(0x13d3, 0x3588), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0489, 0xe14e), .driver_info = BTUSB_MEDIATEK |
 						     BTUSB_WIDEBAND_SPEECH },
@@ -787,7 +817,7 @@ static const struct usb_device_id quirks_table[] = {
 	{ USB_DEVICE(0x2357, 0x0604), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0b05, 0x190e), .driver_info = BTUSB_REALTEK |
-	  					     BTUSB_WIDEBAND_SPEECH },
+						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x2550, 0x8761), .driver_info = BTUSB_REALTEK |
 						     BTUSB_WIDEBAND_SPEECH },
 	{ USB_DEVICE(0x0bda, 0x8771), .driver_info = BTUSB_REALTEK |
@@ -1148,6 +1178,24 @@ static void btusb_qca_reset(struct hci_dev *hdev)
 	}
 
 	btusb_reset(hdev);
+}
+
+static u8 btusb_classify_qca_pkt_type(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	/* Some Qualcomm controllers, e.g., QCNFA765 with WCN6855 chip, send debug
+	 * packets as ACL frames with connection handle 0x2EDC. These are not real
+	 * ACL packets and should be reclassified as HCI_DIAG_PKT to prevent
+	 * "ACL packet for unknown connection handle 3804" errors.
+	 */
+	if (skb->len >= 2) {
+		u16 handle = get_unaligned_le16(skb->data);
+
+		if (handle == 0x2EDC)
+			return HCI_DIAG_PKT;
+	}
+
+	/* Use default packet type for other packets */
+	return hci_skb_pkt_type(skb);
 }
 
 static inline void btusb_free_frags(struct btusb_data *data)
@@ -2051,7 +2099,7 @@ static struct urb *alloc_ctrl_urb(struct hci_dev *hdev, struct sk_buff *skb)
 	if (!urb)
 		return ERR_PTR(-ENOMEM);
 
-	dr = kmalloc(sizeof(*dr), GFP_KERNEL);
+	dr = kmalloc_obj(*dr);
 	if (!dr) {
 		usb_free_urb(urb);
 		return ERR_PTR(-ENOMEM);
@@ -2451,6 +2499,7 @@ static int btusb_setup_csr(struct hci_dev *hdev)
 			     HCI_INIT_TIMEOUT);
 	if (IS_ERR(skb)) {
 		int err = PTR_ERR(skb);
+
 		bt_dev_err(hdev, "CSR: Local version failed (%d)", err);
 		return err;
 	}
@@ -2829,6 +2878,19 @@ static int btusb_mtk_reset(struct hci_dev *hdev, void *rst_data)
 
 	btusb_stop_traffic(data);
 	usb_kill_anchored_urbs(&data->tx_anchor);
+
+	/* Toggle the hard reset line. The MediaTek device is going to
+	 * yank itself off the USB and then replug. The cleanup is handled
+	 * correctly on the way out (standard USB disconnect), and the new
+	 * device is detected cleanly and bound to the driver again like
+	 * it should be.
+	 */
+	if (data->reset_gpio) {
+		gpiod_set_value_cansleep(data->reset_gpio, 1);
+		msleep(200);
+		gpiod_set_value_cansleep(data->reset_gpio, 0);
+		return 0;
+	}
 
 	err = btmtk_usb_subsys_reset(hdev, btmtk_data->dev_id);
 
@@ -3647,31 +3709,14 @@ static inline int __set_diag_interface(struct hci_dev *hdev)
 {
 	struct btusb_data *data = hci_get_drvdata(hdev);
 	struct usb_interface *intf = data->diag;
-	int i;
+	int ret;
 
 	if (!data->diag)
 		return -ENODEV;
 
-	data->diag_tx_ep = NULL;
-	data->diag_rx_ep = NULL;
-
-	for (i = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
-		struct usb_endpoint_descriptor *ep_desc;
-
-		ep_desc = &intf->cur_altsetting->endpoint[i].desc;
-
-		if (!data->diag_tx_ep && usb_endpoint_is_bulk_out(ep_desc)) {
-			data->diag_tx_ep = ep_desc;
-			continue;
-		}
-
-		if (!data->diag_rx_ep && usb_endpoint_is_bulk_in(ep_desc)) {
-			data->diag_rx_ep = ep_desc;
-			continue;
-		}
-	}
-
-	if (!data->diag_tx_ep || !data->diag_rx_ep) {
+	ret = usb_find_common_endpoints(intf->cur_altsetting, &data->diag_rx_ep,
+					&data->diag_tx_ep, NULL, NULL);
+	if (ret) {
 		bt_dev_err(hdev, "invalid diagnostic descriptors");
 		return -ENODEV;
 	}
@@ -3997,12 +4042,11 @@ static struct hci_drv btusb_hci_drv = {
 static int btusb_probe(struct usb_interface *intf,
 		       const struct usb_device_id *id)
 {
-	struct usb_endpoint_descriptor *ep_desc;
 	struct gpio_desc *reset_gpio;
 	struct btusb_data *data;
 	struct hci_dev *hdev;
 	unsigned ifnum_base;
-	int i, err, priv_size;
+	int err, priv_size;
 
 	BT_DBG("intf %p id %p", intf, id);
 
@@ -4035,30 +4079,13 @@ static int btusb_probe(struct usb_interface *intf,
 			return -ENODEV;
 	}
 
-	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	data = kzalloc_obj(*data);
 	if (!data)
 		return -ENOMEM;
 
-	for (i = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
-		ep_desc = &intf->cur_altsetting->endpoint[i].desc;
-
-		if (!data->intr_ep && usb_endpoint_is_int_in(ep_desc)) {
-			data->intr_ep = ep_desc;
-			continue;
-		}
-
-		if (!data->bulk_tx_ep && usb_endpoint_is_bulk_out(ep_desc)) {
-			data->bulk_tx_ep = ep_desc;
-			continue;
-		}
-
-		if (!data->bulk_rx_ep && usb_endpoint_is_bulk_in(ep_desc)) {
-			data->bulk_rx_ep = ep_desc;
-			continue;
-		}
-	}
-
-	if (!data->intr_ep || !data->bulk_tx_ep || !data->bulk_rx_ep) {
+	err = usb_find_common_endpoints(intf->cur_altsetting, &data->bulk_rx_ep,
+					&data->bulk_tx_ep, &data->intr_ep, NULL);
+	if (err) {
 		kfree(data);
 		return -ENODEV;
 	}
@@ -4259,6 +4286,7 @@ static int btusb_probe(struct usb_interface *intf,
 		data->recv_acl = btusb_recv_acl_qca;
 		hci_devcd_register(hdev, btusb_coredump_qca, btusb_dump_hdr_qca, NULL);
 		data->setup_on_usb = btusb_setup_qca;
+		hdev->classify_pkt_type = btusb_classify_qca_pkt_type;
 		hdev->shutdown = btusb_shutdown_qca;
 		hdev->set_bdaddr = btusb_set_bdaddr_wcn6855;
 		hdev->reset = btusb_qca_reset;
@@ -4444,17 +4472,17 @@ static void btusb_disconnect(struct usb_interface *intf)
 	kfree(data);
 }
 
-#ifdef CONFIG_PM
 static int btusb_suspend(struct usb_interface *intf, pm_message_t message)
 {
 	struct btusb_data *data = usb_get_intfdata(intf);
 
 	BT_DBG("intf %p", intf);
 
-	/* Don't auto-suspend if there are connections; external suspend calls
-	 * shall never fail.
+	/* Don't auto-suspend if there are connections or discovery in
+	 * progress; external suspend calls shall never fail.
 	 */
-	if (PMSG_IS_AUTO(message) && hci_conn_count(data->hdev))
+	if (PMSG_IS_AUTO(message) &&
+	    (hci_conn_count(data->hdev) || hci_discovery_active(data->hdev)))
 		return -EBUSY;
 
 	if (data->suspend_count++)
@@ -4598,7 +4626,6 @@ done:
 
 	return err;
 }
-#endif
 
 #ifdef CONFIG_DEV_COREDUMP
 static void btusb_coredump(struct device *dev)
@@ -4615,10 +4642,8 @@ static struct usb_driver btusb_driver = {
 	.name		= "btusb",
 	.probe		= btusb_probe,
 	.disconnect	= btusb_disconnect,
-#ifdef CONFIG_PM
-	.suspend	= btusb_suspend,
-	.resume		= btusb_resume,
-#endif
+	.suspend	= pm_ptr(btusb_suspend),
+	.resume		= pm_ptr(btusb_resume),
 	.id_table	= btusb_table,
 	.supports_autosuspend = 1,
 	.disable_hub_initiated_lpm = 1,

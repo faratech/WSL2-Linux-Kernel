@@ -40,4 +40,3 @@ qemu-img convert -O vhdx "$tmp_dir/modules.img" "$3"
 if [ -n "$SUDO_USER" ]; then
 	chown "$SUDO_USER:$SUDO_USER" "$3"
 fi
-

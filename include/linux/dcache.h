@@ -88,6 +88,7 @@ union shortname_store {
 
 #define d_lock	d_lockref.lock
 #define d_iname d_shortname.string
+struct completion_list;
 
 struct dentry {
 	/* RCU lookup touched fields */
@@ -122,13 +123,24 @@ struct dentry {
 	struct hlist_node d_sib;	/* child of parent list */
 	struct hlist_head d_children;	/* our children */
 	/*
-	 * d_alias and d_rcu can share memory
+	 * the following members can share memory - their uses are
+	 * mutually exclusive.
 	 */
 	union {
-		struct hlist_node d_alias;	/* inode alias list */
-		struct hlist_bl_node d_in_lookup_hash;	/* only for in-lookup ones */
+		/* positives: inode alias list */
+		struct hlist_node d_alias;
+		/* in-lookup ones (all negative, live): hash chain */
+		struct hlist_bl_node d_in_lookup_hash;
+		/* killed ones: (already negative) used to schedule freeing */
 	 	struct rcu_head d_rcu;
-	} d_u;
+		/*
+		 * live non-in-lookup negatives: used if shrink_dcache_tree()
+		 * races with eviction by another thread and needs to wait for
+		 * this dentry to get killed .  Remains NULL for almost all
+		 * negative dentries.
+		 */
+		struct completion_list *waiters;
+	};
 };
 
 /*
@@ -198,7 +210,6 @@ enum dentry_flags {
 	DCACHE_REFERENCED		= BIT(6),	/* Recently used, don't discard. */
 	DCACHE_DONTCACHE		= BIT(7),	/* Purge from memory on final dput() */
 	DCACHE_CANT_MOUNT		= BIT(8),
-	DCACHE_GENOCIDE			= BIT(9),
 	DCACHE_SHRINK_LIST		= BIT(10),
 	DCACHE_OP_WEAK_REVALIDATE	= BIT(11),
 	/*
@@ -225,6 +236,7 @@ enum dentry_flags {
 	DCACHE_PAR_LOOKUP		= BIT(24),	/* being looked up (with parent locked shared) */
 	DCACHE_DENTRY_CURSOR		= BIT(25),
 	DCACHE_NORCU			= BIT(26),	/* No RCU delay for freeing */
+	DCACHE_PERSISTENT		= BIT(27)
 };
 
 #define DCACHE_MANAGED_DENTRY \
@@ -264,10 +276,13 @@ extern void d_invalidate(struct dentry *);
 extern struct dentry * d_make_root(struct inode *);
 
 extern void d_mark_tmpfile(struct file *, struct inode *);
+int d_mark_tmpfile_name(struct file *file, const struct qstr *name);
 extern void d_tmpfile(struct file *, struct inode *);
 
 extern struct dentry *d_find_alias(struct inode *);
 extern void d_prune_aliases(struct inode *);
+extern void d_dispose_if_unused(struct dentry *, struct list_head *);
+extern void shrink_dentry_list(struct list_head *);
 
 extern struct dentry *d_find_alias_rcu(struct inode *);
 
@@ -610,5 +625,11 @@ static inline struct dentry *d_next_sibling(const struct dentry *dentry)
 }
 
 void set_default_d_op(struct super_block *, const struct dentry_operations *);
+struct dentry *d_make_persistent(struct dentry *, struct inode *);
+void d_make_discardable(struct dentry *dentry);
+
+/* inode->i_lock must be held over that */
+#define for_each_alias(dentry, inode) \
+	hlist_for_each_entry(dentry, &(inode)->i_dentry, d_alias)
 
 #endif	/* __LINUX_DCACHE_H */

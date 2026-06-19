@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: ISC
+// SPDX-License-Identifier: BSD-3-Clause-Clear
 /* Copyright (C) 2023 MediaTek Inc. */
 
 #include <linux/devcoredump.h>
@@ -6,6 +6,7 @@
 #include <linux/timekeeping.h>
 #include "mt7925.h"
 #include "../dma.h"
+#include "regd.h"
 #include "mac.h"
 #include "mcu.h"
 
@@ -667,9 +668,9 @@ mt7925_mac_write_txwi_80211(struct mt76_dev *dev, __le32 *txwi,
 	u32 val;
 
 	if (ieee80211_is_action(fc) &&
-	    skb->len >= IEEE80211_MIN_ACTION_SIZE + 1 &&
+	    skb->len >= IEEE80211_MIN_ACTION_SIZE(action_code) &&
 	    mgmt->u.action.category == WLAN_CATEGORY_BACK &&
-	    mgmt->u.action.u.addba_req.action_code == WLAN_ACTION_ADDBA_REQ)
+	    mgmt->u.action.action_code == WLAN_ACTION_ADDBA_REQ)
 		tid = MT_TX_ADDBA;
 	else if (ieee80211_is_mgmt(hdr->frame_control))
 		tid = MT_TX_NORMAL;
@@ -1284,7 +1285,8 @@ mt7925_vif_connect_iter(void *priv, u8 *mac,
 	if (vif->type == NL80211_IFTYPE_AP) {
 		mt76_connac_mcu_uni_add_bss(dev->phy.mt76, vif, &mvif->sta.deflink.wcid,
 					    true, NULL);
-		mt7925_mcu_sta_update(dev, NULL, vif, true,
+		mt7925_mcu_sta_update(dev, NULL, vif,
+				      &mvif->sta.deflink, true,
 				      MT76_STA_INFO_STATE_NONE);
 		mt7925_mcu_uni_add_beacon_offload(dev, hw, vif, true);
 	}
@@ -1335,9 +1337,7 @@ void mt7925_mac_reset_work(struct work_struct *work)
 					    mt7925_vif_connect_iter, NULL);
 	mt76_connac_power_save_sched(&dev->mt76.phy, pm);
 
-	mt792x_mutex_acquire(dev);
-	mt7925_mcu_set_clc(dev, "00", ENVIRON_INDOOR);
-	mt792x_mutex_release(dev);
+	mt7925_regd_change(&dev->phy, "00");
 }
 
 void mt7925_coredump_work(struct work_struct *work)

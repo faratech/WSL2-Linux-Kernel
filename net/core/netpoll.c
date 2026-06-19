@@ -319,6 +319,8 @@ static netdev_tx_t __netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
 	lockdep_assert_irqs_disabled();
 
 	dev = np->dev;
+	/* npinfo->txq belongs to np->dev, so retries must stay bound to it. */
+	skb->dev = dev;
 	rcu_read_lock();
 	npinfo = rcu_dereference_bh(dev->npinfo);
 
@@ -565,7 +567,7 @@ int __netpoll_setup(struct netpoll *np, struct net_device *ndev)
 
 	npinfo = rtnl_dereference(ndev->npinfo);
 	if (!npinfo) {
-		npinfo = kmalloc(sizeof(*npinfo), GFP_KERNEL);
+		npinfo = kmalloc_obj(*npinfo);
 		if (!npinfo) {
 			err = -ENOMEM;
 			goto out;

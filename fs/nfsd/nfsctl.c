@@ -11,7 +11,7 @@
 #include <linux/fs_context.h>
 
 #include <linux/sunrpc/svcsock.h>
-#include <linux/lockd/lockd.h>
+#include <linux/lockd/bind.h>
 #include <linux/sunrpc/addr.h>
 #include <linux/sunrpc/gss_api.h>
 #include <linux/sunrpc/rpc_pipe_fs.h>
@@ -295,6 +295,7 @@ static ssize_t write_unlock_fs(struct file *file, char *buf, size_t size)
 	 * 2.  Is that directory a mount point, or
 	 * 3.  Is that directory the root of an exported file system?
 	 */
+	nfsd4_cancel_copy_by_sb(netns(file), path.dentry->d_sb);
 	error = nlmsvc_unlock_all_by_sb(path.dentry->d_sb);
 	mutex_lock(&nfsd_mutex);
 	nn = net_generic(netns(file), nfsd_net_id);
@@ -386,15 +387,15 @@ static ssize_t write_filehandle(struct file *file, char *buf, size_t size)
 }
 
 /*
- * write_threads - Start NFSD, or report the current number of running threads
+ * write_threads - Start NFSD, or report the configured number of threads
  *
  * Input:
  *			buf:		ignored
  *			size:		zero
  * Output:
  *	On success:	passed-in buffer filled with '\n'-terminated C
- *			string numeric value representing the number of
- *			running NFSD threads;
+ *			string numeric value representing the configured
+ *			number of NFSD threads;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero
  *
@@ -408,8 +409,8 @@ static ssize_t write_filehandle(struct file *file, char *buf, size_t size)
  * Output:
  *	On success:	NFS service is started;
  *			passed-in buffer filled with '\n'-terminated C
- *			string numeric value representing the number of
- *			running NFSD threads;
+ *			string numeric value representing the configured
+ *			number of NFSD threads;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero or a negative errno value
  */
@@ -439,7 +440,7 @@ static ssize_t write_threads(struct file *file, char *buf, size_t size)
 }
 
 /*
- * write_pool_threads - Set or report the current number of threads per pool
+ * write_pool_threads - Set or report the configured number of threads per pool
  *
  * Input:
  *			buf:		ignored
@@ -456,7 +457,7 @@ static ssize_t write_threads(struct file *file, char *buf, size_t size)
  * Output:
  *	On success:	passed-in buffer filled with '\n'-terminated C
  *			string containing integer values representing the
- *			number of NFSD threads in each pool;
+ *			configured number of NFSD threads in each pool;
  *			return code is the size in bytes of the string
  *	On error:	return code is zero or a negative errno value
  */
@@ -486,7 +487,7 @@ static ssize_t write_pool_threads(struct file *file, char *buf, size_t size)
 		return strlen(buf);
 	}
 
-	nthreads = kcalloc(npools, sizeof(int), GFP_KERNEL);
+	nthreads = kzalloc_objs(int, npools);
 	rv = -ENOMEM;
 	if (nthreads == NULL)
 		goto out_free;
@@ -1153,11 +1154,11 @@ static struct dentry *nfsd_mkdir(struct dentry *parent, struct nfsdfs_client *nc
 		inode->i_private = ncl;
 		kref_get(&ncl->cl_ref);
 	}
-	d_instantiate(dentry, inode);
+	d_make_persistent(dentry, inode);
 	inc_nlink(dir);
 	fsnotify_mkdir(dir, dentry);
-	inode_unlock(dir);
-	return dentry;
+	simple_done_creating(dentry);
+	return dentry;	// borrowed
 }
 
 #if IS_ENABLED(CONFIG_SUNRPC_GSS)
@@ -1186,9 +1187,9 @@ static void _nfsd_symlink(struct dentry *parent, const char *name,
 	inode->i_link = (char *)content;
 	inode->i_size = strlen(content);
 
-	d_instantiate(dentry, inode);
+	d_make_persistent(dentry, inode);
 	fsnotify_create(dir, dentry);
-	inode_unlock(dir);
+	simple_done_creating(dentry);
 }
 #else
 static inline void _nfsd_symlink(struct dentry *parent, const char *name,
@@ -1244,11 +1245,11 @@ static int nfsdfs_create_files(struct dentry *root,
 		kref_get(&ncl->cl_ref);
 		inode->i_fop = files->ops;
 		inode->i_private = ncl;
-		d_instantiate(dentry, inode);
+		d_make_persistent(dentry, inode);
 		fsnotify_create(dir, dentry);
 		if (fdentries)
-			fdentries[i] = dentry;
-		inode_unlock(dir);
+			fdentries[i] = dentry; // borrowed
+		simple_done_creating(dentry);
 	}
 	return 0;
 }
@@ -1362,7 +1363,7 @@ static void nfsd_umount(struct super_block *sb)
 
 	nfsd_shutdown_threads(net);
 
-	kill_litter_super(sb);
+	kill_anon_super(sb);
 	put_net(net);
 }
 
@@ -1581,6 +1582,43 @@ out_unlock:
 }
 
 /**
+ * nfsd_nl_fh_key_set - helper to copy fh_key from userspace
+ * @attr: nlattr NFSD_A_SERVER_FH_KEY
+ * @nn: nfsd_net
+ *
+ * Callers should hold nfsd_mutex, returns 0 on success or negative errno.
+ * Callers must ensure the server is shut down (sv_nrthreads == 0),
+ * userspace documentation asserts the key may only be set when the server
+ * is not running.
+ */
+static int nfsd_nl_fh_key_set(const struct nlattr *attr, struct nfsd_net *nn)
+{
+	siphash_key_t *fh_key = nn->fh_key;
+	u64 k0, k1;
+	bool changed;
+
+	k0 = get_unaligned_le64(nla_data(attr));
+	k1 = get_unaligned_le64(nla_data(attr) + 8);
+
+	if (!fh_key) {
+		fh_key = kmalloc(sizeof(siphash_key_t), GFP_KERNEL);
+		if (!fh_key) {
+			trace_nfsd_ctl_fh_key_set(false, -ENOMEM);
+			return -ENOMEM;
+		}
+		nn->fh_key = fh_key;
+		changed = true;
+	} else {
+		changed = fh_key->key[0] != k0 || fh_key->key[1] != k1;
+	}
+
+	fh_key->key[0] = k0;
+	fh_key->key[1] = k1;
+	trace_nfsd_ctl_fh_key_set(changed, 0);
+	return 0;
+}
+
+/**
  * nfsd_nl_threads_set_doit - set the number of running threads
  * @skb: reply buffer
  * @info: netlink metadata and command arguments
@@ -1605,7 +1643,7 @@ int nfsd_nl_threads_set_doit(struct sk_buff *skb, struct genl_info *info)
 
 	mutex_lock(&nfsd_mutex);
 
-	nthreads = kcalloc(nrpools, sizeof(int), GFP_KERNEL);
+	nthreads = kzalloc_objs(int, nrpools);
 	if (!nthreads) {
 		ret = -ENOMEM;
 		goto out_unlock;
@@ -1621,7 +1659,8 @@ int nfsd_nl_threads_set_doit(struct sk_buff *skb, struct genl_info *info)
 
 	if (info->attrs[NFSD_A_SERVER_GRACETIME] ||
 	    info->attrs[NFSD_A_SERVER_LEASETIME] ||
-	    info->attrs[NFSD_A_SERVER_SCOPE]) {
+	    info->attrs[NFSD_A_SERVER_SCOPE] ||
+	    info->attrs[NFSD_A_SERVER_FH_KEY]) {
 		ret = -EBUSY;
 		if (nn->nfsd_serv && nn->nfsd_serv->sv_nrthreads)
 			goto out_unlock;
@@ -1650,7 +1689,18 @@ int nfsd_nl_threads_set_doit(struct sk_buff *skb, struct genl_info *info)
 		attr = info->attrs[NFSD_A_SERVER_SCOPE];
 		if (attr)
 			scope = nla_data(attr);
+
+		attr = info->attrs[NFSD_A_SERVER_FH_KEY];
+		if (attr) {
+			ret = nfsd_nl_fh_key_set(attr, nn);
+			if (ret)
+				goto out_unlock;
+		}
 	}
+
+	attr = info->attrs[NFSD_A_SERVER_MIN_THREADS];
+	if (attr)
+		nn->min_threads = nla_get_u32(attr);
 
 	ret = nfsd_svc(nrpools, nthreads, net, current_cred(), scope);
 	if (ret > 0)
@@ -1662,7 +1712,7 @@ out_unlock:
 }
 
 /**
- * nfsd_nl_threads_get_doit - get the number of running threads
+ * nfsd_nl_threads_get_doit - get the maximum number of running threads
  * @skb: reply buffer
  * @info: netlink metadata and command arguments
  *
@@ -1691,6 +1741,8 @@ int nfsd_nl_threads_get_doit(struct sk_buff *skb, struct genl_info *info)
 			  nn->nfsd4_grace) ||
 	      nla_put_u32(skb, NFSD_A_SERVER_LEASETIME,
 			  nn->nfsd4_lease) ||
+	      nla_put_u32(skb, NFSD_A_SERVER_MIN_THREADS,
+			  nn->min_threads) ||
 	      nla_put_string(skb, NFSD_A_SERVER_SCOPE,
 			  nn->nfsd_name);
 	if (err)
@@ -1703,7 +1755,7 @@ int nfsd_nl_threads_get_doit(struct sk_buff *skb, struct genl_info *info)
 			struct svc_pool *sp = &nn->nfsd_serv->sv_pools[i];
 
 			err = nla_put_u32(skb, NFSD_A_SERVER_THREADS,
-					  sp->sp_nrthreads);
+					  sp->sp_nrthrmax);
 			if (err)
 				goto err_unlock;
 		}
@@ -2161,6 +2213,9 @@ static __net_init int nfsd_net_init(struct net *net)
 	int retval;
 	int i;
 
+	retval = nfsd_net_cb_init(nn);
+	if (retval)
+		return retval;
 	retval = nfsd_export_init(net);
 	if (retval)
 		goto out_export_error;
@@ -2201,6 +2256,7 @@ out_repcache_error:
 out_idmap_error:
 	nfsd_export_shutdown(net);
 out_export_error:
+	nfsd_net_cb_shutdown(nn);
 	return retval;
 }
 
@@ -2230,6 +2286,8 @@ static __net_exit void nfsd_net_exit(struct net *net)
 {
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
 
+	kfree_sensitive(nn->fh_key);
+	nfsd_net_cb_shutdown(nn);
 	nfsd_proc_stat_shutdown(net);
 	percpu_counter_destroy_many(nn->counter, NFSD_STATS_COUNTERS_NUM);
 	nfsd_idmap_shutdown(net);

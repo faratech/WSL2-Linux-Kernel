@@ -60,6 +60,8 @@ static bool tb_property_entry_valid(const struct tb_property_entry *entry,
 	case TB_PROPERTY_TYPE_DIRECTORY:
 	case TB_PROPERTY_TYPE_DATA:
 	case TB_PROPERTY_TYPE_TEXT:
+		if (!entry->length)
+			return false;
 		if (entry->length > block_len)
 			return false;
 		if (check_add_overflow(entry->value, entry->length, &end) ||
@@ -86,7 +88,7 @@ tb_property_alloc(const char *key, enum tb_property_type type)
 {
 	struct tb_property *property;
 
-	property = kzalloc(sizeof(*property), GFP_KERNEL);
+	property = kzalloc_obj(*property);
 	if (!property)
 		return NULL;
 
@@ -176,7 +178,7 @@ static struct tb_property_dir *__tb_property_parse_dir(const u32 *block,
 	if (depth > TB_PROPERTY_MAX_DEPTH)
 		return NULL;
 
-	dir = kzalloc(sizeof(*dir), GFP_KERNEL);
+	dir = kzalloc_obj(*dir);
 	if (!dir)
 		return NULL;
 
@@ -185,6 +187,10 @@ static struct tb_property_dir *__tb_property_parse_dir(const u32 *block,
 	if (is_root) {
 		content_offset = dir_offset + 2;
 		content_len = dir_len;
+		if (content_offset + content_len > block_len) {
+			tb_property_free_dir(dir);
+			return NULL;
+		}
 	} else {
 		if (dir_len < 4) {
 			tb_property_free_dir(dir);
@@ -261,7 +267,7 @@ struct tb_property_dir *tb_property_create_dir(const uuid_t *uuid)
 {
 	struct tb_property_dir *dir;
 
-	dir = kzalloc(sizeof(*dir), GFP_KERNEL);
+	dir = kzalloc_obj(*dir);
 	if (!dir)
 		return NULL;
 
